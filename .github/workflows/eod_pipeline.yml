@@ -27,10 +27,12 @@ jobs:
           pip install pandas numpy scipy plotly yfinance
 
       - name: Execute Quant Engine
+        run: python main.py
+
+      - name: Validate Output Artifacts
         run: |
-          # docsディレクトリをクリーンに保つ
-          rm -rf docs/*
-          python main.py
+          echo "Checking generated files in docs/:"
+          find docs -name "*.html" -exec ls -l {} \;
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
