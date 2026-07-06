@@ -34,8 +34,9 @@ jobs:
 
       - name: Install Playwright
         run: |
-          playwright install chromium
-          playwright install-deps chromium
+          # pip経由でインストール済みのplaywrightモジュールを使用してブラウザを導入する
+          python -m playwright install chromium
+          python -m playwright install-deps chromium
 
       - name: Execute Quant Engine
         env:
