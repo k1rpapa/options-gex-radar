@@ -7,6 +7,14 @@ from scipy.stats import norm
 from scipy.signal import find_peaks
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+# main.py の冒頭に追加
+import pathlib
+ROOT_DIR = pathlib.Path(__file__).parent.resolve()
+DOCS_DIR = ROOT_DIR / "docs"
+
+# 実行時
+DOCS_DIR.mkdir(exist_ok=True)
+file_path = DOCS_DIR / f"{ticker.lower()}.html"
 
 # ターゲットアセット
 TARGET_ASSETS = {"UNG": "天然ガス (NG)", "SLV": "銀 (SI)", "CORN": "コーン (ZC)"}
