@@ -27,19 +27,17 @@ jobs:
           pip install pandas numpy scipy plotly yfinance
 
       - name: Execute Quant Engine
-        run: python main.py
-
-      - name: Validate Output Artifacts
         run: |
-          echo "Checking generated files in docs/:"
-          find docs -name "*.html" -exec ls -l {} \;
+          # 実行前に既存のアーティファクトをクリーンアップ
+          rm -rf docs/*
+          python main.py
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs
-          # 警告の原因となっていた full_sync を削除し、force_orphan で強制上書きを行う
-          force_orphan: true 
-          user_name: 'github-actions[bot]'
-          user_email: 'github-actions[bot]@users.noreply.github.com'
+      - name: Commit and Push to main
+        run: |
+          # GitHub Actions Botとして main ブランチの docs/ 配下へ直接コミット
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add docs/
+          # 差分がない場合（休場日など）はエラーにせずスキップ
+          git commit -m "chore: Daily GEX Profile Update [skip ci]" || exit 0
+          git push origin main
