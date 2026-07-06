@@ -3,7 +3,7 @@ name: Quant Options GEX Pipeline
 on:
   schedule:
     - cron: '30 21 * * *' # UTC 21:30 (JST 06:30)
-  workflow_dispatch:
+  workflow_dispatch: # 手動実行用
 
 permissions:
   contents: write
@@ -15,7 +15,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -26,13 +26,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Cache Playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements.txt') }}
+
+      - name: Install Playwright
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
       - name: Execute Quant Engine
+        env:
+          # 必要に応じてAPIキー等をSecretsから注入
+          # BARCHART_API_KEY: ${{ secrets.BARCHART_API_KEY }}
+          PYTHONPATH: ${{ github.workspace }}
         run: python main.py
 
-      - name: Commit and Push Dashboard
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add docs/index.html
-          git commit -m "chore: Daily GEX Profile Update [skip ci]" || exit 0
-          git push
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs
+          force_orphan: true # 履歴をリセットしてクリーンなデプロイを維持
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
