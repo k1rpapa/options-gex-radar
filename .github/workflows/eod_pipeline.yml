@@ -1,21 +1,46 @@
 name: Quant GEX Pipeline
+
 on:
   schedule:
-    - cron: '30 21 * * *'
+    - cron: '30 21 * * *' # 日本時間 06:30
   workflow_dispatch:
+
 permissions:
   contents: write
+
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: '3.12', cache: 'pip'}
-      - run: pip install pandas numpy scipy plotly yfinance
-      - run: python main.py
-      - uses: peaceiris/actions-gh-pages@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy scipy plotly yfinance
+
+      - name: Execute Quant Engine
+        run: python main.py
+
+      - name: Verify build artifacts
+        run: |
+          echo "Listing contents of docs/ directory:"
+          ls -la docs/
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./docs
+          # 以前のデプロイで生じた不整合を解消するため、強制同期を有効化
+          full_sync: true
           force_orphan: true
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
