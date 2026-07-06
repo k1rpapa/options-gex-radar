@@ -2,7 +2,7 @@ name: Quant GEX Pipeline
 
 on:
   schedule:
-    - cron: '30 21 * * *' # 日本時間 06:30
+    - cron: '30 21 * * *'
   workflow_dispatch:
 
 permissions:
@@ -27,20 +27,17 @@ jobs:
           pip install pandas numpy scipy plotly yfinance
 
       - name: Execute Quant Engine
-        run: python main.py
-
-      - name: Verify build artifacts
         run: |
-          echo "Listing contents of docs/ directory:"
-          ls -la docs/
+          # docsディレクトリをクリーンに保つ
+          rm -rf docs/*
+          python main.py
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./docs
-          # 以前のデプロイで生じた不整合を解消するため、強制同期を有効化
-          full_sync: true
-          force_orphan: true
+          # 警告の原因となっていた full_sync を削除し、force_orphan で強制上書きを行う
+          force_orphan: true 
           user_name: 'github-actions[bot]'
           user_email: 'github-actions[bot]@users.noreply.github.com'
