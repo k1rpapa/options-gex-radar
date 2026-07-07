@@ -14,7 +14,6 @@ DOCS_DIR = ROOT_DIR / "docs"
 
 def load_barchart_csv():
     """リポジトリ内のBarchartのCSVを自動スキャンして結合・パースする"""
-    import glob
     side_by_side_files = glob.glob("*side-by-side*.csv")
     greeks_files = glob.glob("*volatility-greeks*.csv")
     
@@ -34,21 +33,36 @@ def load_barchart_csv():
     df_sb.columns = [str(c).strip() for c in df_sb.columns]
     df_gk.columns = [str(c).strip() for c in df_gk.columns]
     
-    # Barchart仕様: CallとPutで同名カラムが存在するため、
-    # Pandasが自動的に右側(Put)を '.1' とリネームする仕様に完全対応
-    sb_map = {'Strike': 'Strike', 'Open Int': 'Call_OI', 'Open Int.1': 'Put_OI'}
-    gk_map = {'Strike': 'Strike', 'Implied Vol': 'Call_IV', 'Implied Vol.1': 'Put_IV'}
+    # 動的なカラム検知ロジック
+    oi_candidates = ['Open Int', 'OI', 'Open Interest']
+    call_oi_col, put_oi_col = None, None
+    for col in oi_candidates:
+        if col in df_sb.columns:
+            call_oi_col, put_oi_col = col, f"{col}.1"
+            break
+
+    iv_candidates = ['IV', 'Implied Vol', 'Implied Volatility']
+    call_iv_col, put_iv_col = None, None
+    for col in iv_candidates:
+        if col in df_gk.columns:
+            call_iv_col, put_iv_col = col, f"{col}.1"
+            break
+            
+    if not call_oi_col or not call_iv_col:
+        raise KeyError(f"必要なカラムが見つかりません。OI候補: {call_oi_col}, IV候補: {call_iv_col}")
+        
+    print(f"[検知成功] OIカラム: '{call_oi_col}' / IVカラム: '{call_iv_col}'")
     
-    try:
-        df_sb_clean = df_sb[['Strike', 'Open Int', 'Open Int.1']].rename(columns=sb_map)
-        df_gk_clean = df_gk[['Strike', 'Implied Vol', 'Implied Vol.1']].rename(columns=gk_map)
-    except KeyError as e:
-        raise KeyError(f"Barchart CSVのカラム解析に失敗しました。詳細: {e}")
+    sb_map = {'Strike': 'Strike', call_oi_col: 'Call_OI', put_oi_col: 'Put_OI'}
+    gk_map = {'Strike': 'Strike', call_iv_col: 'Call_IV', put_iv_col: 'Put_IV'}
+    
+    df_sb_clean = df_sb[['Strike', call_oi_col, put_oi_col]].rename(columns=sb_map)
+    df_gk_clean = df_gk[['Strike', call_iv_col, put_iv_col]].rename(columns=gk_map)
         
     # Strikeをキーに内部結合
     df = pd.merge(df_sb_clean, df_gk_clean, on='Strike', how='inner')
     
-    # データクレンジング (カンマ除去, Barchart特有の '-' や 'N/A' を '0' に変換)
+    # データクレンジング (カンマ除去, 'N/A' や '-' を '0' に変換)
     for col in ['Call_OI', 'Put_OI']:
         if df[col].dtype == 'object':
             df[col] = df[col].astype(str).str.replace(',', '').str.replace('N/A', '0').str.replace('-', '0').astype(float)
@@ -60,7 +74,6 @@ def load_barchart_csv():
     df = df.fillna(0)
     df['IV'] = df[['Call_IV', 'Put_IV']].mean(axis=1)
     
-    # 限月の抽出
     expiry_info = "SI (COMEX)"
     if "exp-" in sb_path:
         expiry_info = sb_path.split("exp-")[1].split("-")[0]
@@ -78,14 +91,13 @@ def fetch_futures_spot():
 def calculate_gex(df, spot, multiplier=5000):
     """COMEX銀先物のマルチプライヤー（$5,000）を適用した本格GEX計算"""
     df = df[(df['Call_OI'] > 0) | (df['Put_OI'] > 0)].copy()
-    T = 22 / 365.0 # 残存日数はCSV記載の22日に固定、あるいは動的計算
+    T = 22 / 365.0 
     r = 0.045
     iv = np.where(df["IV"] <= 0.01, 0.01, df["IV"])
     
     d1 = (np.log(spot / df["Strike"]) + (r + iv**2 / 2) * T) / (iv * np.sqrt(T))
     gamma = norm.pdf(d1) / (spot * iv * np.sqrt(T))
     
-    # 先物の大きなサイズに合わせてMillion単位に調整
     df["Call_GEX"] = (df["Call_OI"] * gamma * spot * multiplier * 0.01) / 1e6
     df["Put_GEX"] = (-df["Put_OI"] * gamma * spot * multiplier * 0.01) / 1e6
     df["Net_GEX"] = df["Call_GEX"] + df["Put_GEX"]
@@ -99,7 +111,6 @@ def extract_flip_point(df, spot):
     sign_flips = np.where(np.diff(np.sign(net_gex)))[0]
     if len(sign_flips) == 0: return np.nan
     
-    # 現物価格に最も近い反転ポイントを選択
     closest_flip_idx = min(sign_flips, key=lambda i: abs(strikes[i] - spot))
     x0, x1 = net_gex[closest_flip_idx], net_gex[closest_flip_idx + 1]
     y0, y1 = strikes[closest_flip_idx], strikes[closest_flip_idx + 1]
@@ -110,7 +121,6 @@ def extract_flip_point(df, spot):
 def export_dashboard(df, spot, expiry, output_path):
     flip_point = extract_flip_point(df, spot)
     
-    # 表示範囲を現物価格の上下30%に絞って視認性を極大化
     df_zoom = df[(df['Strike'] >= spot * 0.7) & (df['Strike'] <= spot * 1.3)]
     
     fig = make_subplots(
@@ -141,10 +151,10 @@ def export_dashboard(df, spot, expiry, output_path):
 
 if __name__ == "__main__":
     DOCS_DIR.mkdir(exist_ok=True)
-    # Jekyllビルド回避用の空ファイル
+    
+    # Jekyllビルド回避用の空ファイルを強制生成
     (DOCS_DIR / ".nojekyll").touch()
     
-    # エラーを握りつぶさず、原因を特定するために例外をそのまま発生させる
     df, expiry = load_barchart_csv()
     spot = fetch_futures_spot()
     df = calculate_gex(df, spot)
