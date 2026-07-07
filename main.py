@@ -139,10 +139,17 @@ def export_dashboard(df, spot, expiry, output_path, config):
     
     df_zoom = df[(df['Strike'] >= spot * 0.7) & (df['Strike'] <= spot * 1.3)].copy()
     
-    # --- IVノイズフィルター ---
-    # 過疎地の極端なIVスパイク（中央値の2.5倍以上）を描画から除外し、スマイル曲線を綺麗に保つ
-    iv_median = df_zoom["IV"].median()
-    df_zoom["IV_plot"] = np.where(df_zoom["IV"] > iv_median * 2.5, np.nan, df_zoom["IV"])
+    # --- IVノイズフィルター (強力版: 移動中央値フィルター) ---
+    # 天然ガス特有の激しいギザギザ（局所的なスパイク）を除去する
+    iv_series = df_zoom["IV"].replace(0, np.nan)
+    # 前後5つのデータから局所的な中央値を計算
+    rolling_median = iv_series.rolling(window=5, center=True, min_periods=1).median()
+    # 局所的な中央値から「絶対値で10%(0.1)以上」または「1.5倍以上」乖離している異常なポイントを除外
+    df_zoom["IV_plot"] = np.where(
+        (abs(iv_series - rolling_median) > 0.1) | (iv_series > rolling_median * 1.5), 
+        np.nan, 
+        iv_series
+    )
     
     is_positive = spot > flip_point
     regime_text = "🟢 POSITIVE GAMMA REGIME (押し目買い優位)" if is_positive else "🔴 NEGATIVE GAMMA REGIME (ブレイクアウト・順張り優位)"
