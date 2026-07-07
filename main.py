@@ -139,17 +139,13 @@ def export_dashboard(df, spot, expiry, output_path, config):
     
     df_zoom = df[(df['Strike'] >= spot * 0.7) & (df['Strike'] <= spot * 1.3)].copy()
     
-    # --- IVノイズフィルター (強力版: 移動中央値フィルター) ---
-    # 天然ガス特有の激しいギザギザ（局所的なスパイク）を除去する
+    # --- IVノイズフィルター (改善版: スパイク除去と線繋ぎ) ---
+    # 局所的な中央値を計算
     iv_series = df_zoom["IV"].replace(0, np.nan)
-    # 前後5つのデータから局所的な中央値を計算
     rolling_median = iv_series.rolling(window=5, center=True, min_periods=1).median()
-    # 局所的な中央値から「絶対値で10%(0.1)以上」または「1.5倍以上」乖離している異常なポイントを除外
-    df_zoom["IV_plot"] = np.where(
-        (abs(iv_series - rolling_median) > 0.1) | (iv_series > rolling_median * 1.5), 
-        np.nan, 
-        iv_series
-    )
+    
+    # 上振れの激しいスパイク（中央値の1.5倍以上）のみを除外
+    df_zoom["IV_plot"] = np.where(iv_series > rolling_median * 1.5, np.nan, iv_series)
     
     is_positive = spot > flip_point
     regime_text = "🟢 POSITIVE GAMMA REGIME (押し目買い優位)" if is_positive else "🔴 NEGATIVE GAMMA REGIME (ブレイクアウト・順張り優位)"
@@ -178,7 +174,8 @@ def export_dashboard(df, spot, expiry, output_path, config):
                   annotation=dict(font=dict(color="black", size=13), bgcolor="rgba(255,255,0,0.8)", bordercolor="yellow", borderwidth=1),
                   row=1, col=1)
         
-    fig.add_trace(go.Scatter(x=df_zoom["Strike"], y=df_zoom["IV_plot"]*100, name="IV", mode="lines+markers", line_color="orange"), row=2, col=1)
+    # connectgaps=True を追加して、NaNの箇所を跨いで線を繋ぐ
+    fig.add_trace(go.Scatter(x=df_zoom["Strike"], y=df_zoom["IV_plot"]*100, name="IV", mode="lines+markers", line_color="orange", connectgaps=True), row=2, col=1)
     
     fig.update_layout(
         title=f"Quant Options Radar: {config['name']} | Expiry: {expiry}",
