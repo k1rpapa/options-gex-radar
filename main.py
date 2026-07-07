@@ -62,14 +62,22 @@ def load_barchart_csv():
     # Strikeをキーに内部結合
     df = pd.merge(df_sb_clean, df_gk_clean, on='Strike', how='inner')
     
-    # データクレンジング (カンマ除去, 'N/A' や '-' を '0' に変換)
-    for col in ['Call_OI', 'Put_OI']:
-        if df[col].dtype == 'object':
-            df[col] = df[col].astype(str).str.replace(',', '').str.replace('N/A', '0').str.replace('-', '0').astype(float)
-            
-    for col in ['Call_IV', 'Put_IV']:
-        if df[col].dtype == 'object':
-            df[col] = df[col].astype(str).str.replace('%', '').str.replace(',', '').str.replace('N/A', '0').str.replace('-', '0').astype(float) / 100.0
+    # データクレンジング: dtype判定を外し、強制的に文字列変換してからパースする
+    def clean_col(series, is_iv=False):
+        # 全ての文字を一旦文字列としてクレンジング (regex=Falseで警告回避)
+        s = series.astype(str).str.replace('%', '', regex=False)\
+                              .str.replace(',', '', regex=False)\
+                              .str.replace('N/A', '0', regex=False)\
+                              .str.replace('-', '0', regex=False)\
+                              .str.strip()
+        # 強制的に数値化（変換できない不正な文字はNaNになり、その後0で埋められる）
+        s_num = pd.to_numeric(s, errors='coerce').fillna(0)
+        return s_num / 100.0 if is_iv else s_num
+
+    df['Call_OI'] = clean_col(df['Call_OI'])
+    df['Put_OI'] = clean_col(df['Put_OI'])
+    df['Call_IV'] = clean_col(df['Call_IV'], is_iv=True)
+    df['Put_IV'] = clean_col(df['Put_IV'], is_iv=True)
             
     df = df.fillna(0)
     df['IV'] = df[['Call_IV', 'Put_IV']].mean(axis=1)
