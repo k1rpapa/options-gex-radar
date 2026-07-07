@@ -12,55 +12,31 @@ from plotly.subplots import make_subplots
 ROOT_DIR = Path(__file__).parent.resolve()
 DOCS_DIR = ROOT_DIR / "docs"
 
-# 複数アセットの定義とマルチプライヤー設定
+# 複数アセット定義
 ASSET_CONFIG = {
-    "SI": {
-        "name": "銀先物 (SI)",
-        "ticker": "SI=F",
-        "multiplier": 5000,
-        "filename": "index.html"
-    },
-    "NG": {
-        "name": "天然ガス先物 (NG)",
-        "ticker": "NG=F",
-        "multiplier": 10000,
-        "filename": "ng.html"
-    },
-    "ZS": {
-        "name": "大豆先物 (ZS)",
-        "ticker": "ZS=F",
-        "multiplier": 5000,
-        "filename": "zs.html"
-    }
+    "SI": {"name": "銀先物 (SI)", "ticker": "SI=F", "multiplier": 5000, "filename": "index.html"},
+    "NG": {"name": "天然ガス先物 (NG)", "ticker": "NG=F", "multiplier": 10000, "filename": "ng.html"},
+    "ZS": {"name": "大豆先物 (ZS)", "ticker": "ZS=F", "multiplier": 5000, "filename": "zs.html"}
 }
 
 def parse_strike(val):
-    """520-0 や 1.250 などの形式を正確にfloatへ変換"""
     s = str(val).split('-')[0].replace(',', '').strip()
     try: return float(s)
     except: return 0.0
 
 def load_barchart_csv(prefix_pattern):
-    """プレフィックス（例: si, ng, zs）に合致する最新のCSVペアを読み込む"""
     sb_files = sorted(glob.glob(f"{prefix_pattern}*side-by-side*.csv"))
     gk_files = sorted(glob.glob(f"{prefix_pattern}*volatility-greeks*.csv"))
-    
-    if not sb_files or not gk_files:
-        return None, None
+    if not sb_files or not gk_files: return None, None
         
     sb_path = sb_files[-1]
     gk_path = gk_files[-1]
     
-    print(f"[{prefix_pattern.upper()} Loading] 建玉データ: {sb_path}")
-    print(f"[{prefix_pattern.upper()} Loading] ギリシャ・IVデータ: {gk_path}")
-    
     df_sb = pd.read_csv(sb_path)
     df_gk = pd.read_csv(gk_path)
-    
     df_sb.columns = [str(c).strip() for c in df_sb.columns]
     df_gk.columns = [str(c).strip() for c in df_gk.columns]
     
-    # 銘柄特有の表記揺れ（Strikeが「520-0」のような形式の場合）に対応
     df_sb['Strike'] = df_sb['Strike'].apply(parse_strike)
     df_gk['Strike'] = df_gk['Strike'].apply(parse_strike)
 
@@ -79,13 +55,12 @@ def load_barchart_csv(prefix_pattern):
             break
             
     if not call_oi_col or not call_iv_col:
-        raise KeyError(f"必要なカラムが見つかりません。")
+        raise KeyError("必要なカラムが見つかりません。")
         
     df = pd.merge(df_sb[['Strike', call_oi_col, put_oi_col]], 
                   df_gk[['Strike', call_iv_col, put_iv_col]], 
                   on='Strike', how='inner')
     
-    # データクレンジング
     def clean_val(x):
         s = str(x).split('-')[0].replace('%', '').replace(',', '').replace('N/A', '0').replace('nan', '0').strip()
         try: return float(s)
@@ -108,14 +83,12 @@ def load_barchart_csv(prefix_pattern):
 def fetch_futures_spot(ticker):
     tkr = yf.Ticker(ticker)
     hist = tkr.history(period="1d")
-    if hist.empty:
-        raise ValueError(f"yfinanceから {ticker} のスポット価格取得に失敗しました。")
+    if hist.empty: raise ValueError(f"取得失敗: {ticker}")
     return hist['Close'].iloc[-1]
 
 def calculate_gex(df, spot, multiplier):
     df = df[(df['Call_OI'] > 0) | (df['Put_OI'] > 0)].copy()
-    T = 22 / 365.0 
-    r = 0.045
+    T, r = 22 / 365.0, 0.045
     iv = np.where(df["IV"] <= 0.01, 0.01, df["IV"])
     
     d1 = (np.log(spot / df["Strike"]) + (r + iv**2 / 2) * T) / (iv * np.sqrt(T))
@@ -128,25 +101,19 @@ def calculate_gex(df, spot, multiplier):
 
 def extract_flip_point(df, spot):
     df_sorted = df.sort_values("Strike").dropna(subset=["Net_GEX"])
-    net_gex = df_sorted["Net_GEX"].values
-    strikes = df_sorted["Strike"].values
-    
+    net_gex, strikes = df_sorted["Net_GEX"].values, df_sorted["Strike"].values
     sign_flips = np.where(np.diff(np.sign(net_gex)))[0]
     if len(sign_flips) == 0: return np.nan
-    
     closest_flip_idx = min(sign_flips, key=lambda i: abs(strikes[i] - spot))
     x0, x1 = net_gex[closest_flip_idx], net_gex[closest_flip_idx + 1]
     y0, y1 = strikes[closest_flip_idx], strikes[closest_flip_idx + 1]
-    
     if x1 - x0 == 0: return y0
     return y0 - (x0 * (y1 - y0) / (x1 - x0))
 
 def export_dashboard(df, spot, expiry, output_path, config):
     flip_point = extract_flip_point(df, spot)
-    
     df_zoom = df[(df['Strike'] >= spot * 0.7) & (df['Strike'] <= spot * 1.3)].copy()
     
-    # --- IVノイズフィルター (マイルド版: 生データの歪みを残す) ---
     iv_series = df_zoom["IV"].replace(0, np.nan)
     iv_median = iv_series.median()
     df_zoom["IV_plot"] = np.where(iv_series > iv_median * 2.5, np.nan, iv_series)
@@ -169,21 +136,22 @@ def export_dashboard(df, spot, expiry, output_path, config):
         fig.add_vline(x=flip_point, line=dict(color="red", width=2, dash="dashdot"), 
                       annotation_text=f"Zero-Gamma<br>{flip_point:.3f}", 
                       annotation_position="top left", 
-                      annotation=dict(font=dict(color="white", size=13), bgcolor="rgba(255,0,0,0.6)", bordercolor="red", borderwidth=1),
-                      row=1, col=1)
+                      annotation=dict(font=dict(color="white", size=13), bgcolor="rgba(255,0,0,0.6)", bordercolor="red", borderwidth=1), row=1, col=1)
 
     fig.add_vline(x=spot, line=dict(color="yellow", width=2, dash="solid"), 
                   annotation_text=f"Current Spot<br>{spot:.3f}", 
                   annotation_position="bottom right", 
-                  annotation=dict(font=dict(color="black", size=13), bgcolor="rgba(255,255,0,0.8)", bordercolor="yellow", borderwidth=1),
-                  row=1, col=1)
+                  annotation=dict(font=dict(color="black", size=13), bgcolor="rgba(255,255,0,0.8)", bordercolor="yellow", borderwidth=1), row=1, col=1)
         
-    # 生データのギザギザを線で繋ぐ (connectgaps=True)
     fig.add_trace(go.Scatter(x=df_zoom["Strike"], y=df_zoom["IV_plot"]*100, name="IV", mode="lines+markers", line_color="orange", connectgaps=True), row=2, col=1)
     
+    # --- 超重要: グラフ自体のサイズをピクセルで強力に固定 ---
     fig.update_layout(
         title=f"Quant Options Radar: {config['name']} | Expiry: {expiry}",
-        template="plotly_dark", height=950, barmode='relative', hovermode='x unified',
+        template="plotly_dark", 
+        width=1200,  # 幅を1200pxに強制固定（スマホが勝手に縮小するのを防ぐ）
+        height=850,  # 縦幅も指定
+        barmode='relative', hovermode='x unified',
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     fig.update_yaxes(title_text="GEX ($M)", row=1, col=1)
@@ -192,19 +160,51 @@ def export_dashboard(df, spot, expiry, output_path, config):
     
     fig.write_html(output_path, include_plotlyjs="cdn", full_html=True)
 
-    # --- グローバル・ナビゲーション・バーの注入 ---
+    # --- モバイル完全対応のViewport制御とHTML/CSSの注入 ---
     with open(output_path, 'r', encoding='utf-8') as f:
         html_content = f.read()
     
-    nav_html = f"""
-    <div style="padding: 12px; background-color: #111; text-align: center; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 9999;">
-        <a href="index.html" style="color: #00FFFF; margin: 0 15px; text-decoration: none; font-family: sans-serif; font-weight: bold; font-size: 16px;">🪙 Silver (SI)</a>
-        <a href="ng.html" style="color: #FF00FF; margin: 0 15px; text-decoration: none; font-family: sans-serif; font-weight: bold; font-size: 16px;">🔥 Natural Gas (NG)</a>
-        <a href="zs.html" style="color: #32CD32; margin: 0 15px; text-decoration: none; font-family: sans-serif; font-weight: bold; font-size: 16px;">🌱 Soybeans (ZS)</a>
-        <a href="gex_trading_guide.html" style="color: #FFFF00; margin: 0 15px; text-decoration: none; font-family: sans-serif; font-weight: bold; font-size: 16px;">📖 Trading Manual</a>
-    </div>
+    custom_head = """
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        body { margin: 0; background-color: #111; font-family: sans-serif; overflow-x: hidden; }
+        .nav-bar {
+            padding: 10px; background-color: #111; text-align: center; 
+            border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 9999;
+        }
+        .nav-bar a { margin: 0 10px; text-decoration: none; font-weight: bold; font-size: 15px; display: inline-block; padding: 5px; }
+        .mobile-notice {
+            display: none; background-color: #2c3e50; color: #f1c40f; 
+            text-align: center; padding: 8px; font-size: 13px; font-weight: bold;
+        }
+        .chart-scroll-container {
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch; /* スマホでの滑らかな横スクロール */
+        }
+        /* スマホ向けのレイアウト切り替え */
+        @media screen and (max-width: 800px) {
+            .mobile-notice { display: block; }
+            .nav-bar a { font-size: 12px; margin: 0 3px; }
+        }
+    </style>
     """
-    html_content = html_content.replace('<body>', f'<body style="margin:0;">\n{nav_html}')
+    
+    nav_and_container = """
+    <body>
+    <div class="nav-bar">
+        <a href="index.html" style="color: #00FFFF;">🪙 Silver (SI)</a>
+        <a href="ng.html" style="color: #FF00FF;">🔥 Natural Gas (NG)</a>
+        <a href="zs.html" style="color: #32CD32;">🌱 Soybeans (ZS)</a>
+        <a href="gex_trading_guide.html" style="color: #FFFF00;">📖 Trading Manual</a>
+    </div>
+    <div class="mobile-notice">📱 グラフを左右にスワイプして詳細を確認できます</div>
+    <div class="chart-scroll-container">
+    """
+    
+    html_content = html_content.replace('<head>', f'<head>\n{custom_head}')
+    html_content = html_content.replace('<body>', nav_and_container)
+    html_content = html_content.replace('</body>', '</div></body>')
     
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
@@ -213,9 +213,8 @@ if __name__ == "__main__":
     DOCS_DIR.mkdir(exist_ok=True)
     (DOCS_DIR / ".nojekyll").touch()
     
-    # 全アセットの処理を自動ループ
     for asset_key, config in ASSET_CONFIG.items():
-        prefix = asset_key.lower() # 'si', 'ng', 'zs'
+        prefix = asset_key.lower()
         try:
             df, expiry = load_barchart_csv(prefix)
             if df is not None:
