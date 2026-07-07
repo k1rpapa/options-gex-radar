@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>クオンツGEXレーダー 実践トレード・マニュアル</title>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        .container {
+            background-color: #fff;
+            padding: 30px 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 {
+            border-bottom: 2px solid #2c3e50;
+            padding-bottom: 10px;
+            color: #2c3e50;
+            font-size: 1.8em;
+        }
+        h2 {
+            margin-top: 30px;
+            border-left: 5px solid #3498db;
+            padding-left: 10px;
+            color: #2980b9;
+        }
+        h3 {
+            color: #34495e;
+            margin-top: 25px;
+        }
+        p, li {
+            font-size: 1.05em;
+        }
+        ul {
+            margin-bottom: 15px;
+        }
+        .highlight {
+            background-color: #fff3cd;
+            padding: 15px;
+            border-left: 5px solid #ffc107;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .color-box {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            margin-right: 5px;
+            border-radius: 2px;
+        }
+        .cyan { background-color: #00FFFF; border: 1px solid #ccc; }
+        .magenta { background-color: #FF00FF; border: 1px solid #ccc; }
+        .red { background-color: #FF0000; border: 1px solid #ccc; }
+        .yellow { background-color: #FFFF00; border: 1px solid #ccc; }
+        img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>クオンツGEXレーダー 実践トレード・マニュアル<br><span style="font-size:0.6em; color:#7f8c8d;">（銀先物・初心者向け）</span></h1>
+        
+        <p>このダッシュボードは、相場を動かす巨大なクジラである「オプションのマーケットメーカー（MM）」が、<strong>どこで現物を買い、どこで現物を売らざるを得ないか</strong>を可視化した「カンニングペーパー」です。</p>
+        <p>CFDトレードにおいて、ローソク足や移動平均線よりも前に、毎朝必ずこのレーダーで「今日の相場の重力場」を確認してください。</p>
+
+        <h2>1. 画面の見方：3つの重要なサイン</h2>
+        <p>ダッシュボードを開いたら、見るべきポイントはたったの3つです。</p>
+
+        <h3>① スポット価格（<span class="color-box yellow"></span>黄色の実線: Spot）</h3>
+        <p>現在の先物価格です。あなたのCFDトレードにおける「現在地」になります。</p>
+
+        <h3>② GEXの壁（シアン色とマゼンタ色のバー）</h3>
+        <p>これがMMが構築している「見えない壁」です。バーが長ければ長いほど、壁は分厚く、価格を跳ね返す力が強くなります。</p>
+        <ul>
+            <li><strong><span class="color-box cyan"></span> シアン色（Call GEX）：相場の「天井（レジスタンス）」</strong>
+                <ul>
+                    <li>価格がここに向かって上がっていくと、MMはヘッジのために「強制的に売り」を入れてきます。</li>
+                    <li><strong>意味:</strong> 上昇トレンドがここで止められやすい。</li>
+                </ul>
+            </li>
+            <li><strong><span class="color-box magenta"></span> マゼンタ色（Put GEX）：相場の「床（サポート）」</strong>
+                <ul>
+                    <li>価格がここに向かって下がっていくと、MMはヘッジのために「強制的に買い」を入れてきます。</li>
+                    <li><strong>意味:</strong> 下落トレンドがここで支えられやすい。</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h3>③ ゼロガンマ・フリップ（<span class="color-box red"></span>赤の一点鎖線: Zero-Gamma）</h3>
+        <p><strong>このレーダーで最も重要な線です。</strong><br>
+        ここは相場の「天気の境界線」であり、現在地（Spot）がこの線の右にいるか左にいるかで、今日のあなたのトレード手法（順張りか、逆張りか）が180度変わります。</p>
+
+        <div class="highlight">
+            <strong>💡 Tips: SpotとZero-Gammaが重なって見にくい時は？</strong><br><br>
+            現在価格（Spot）がZero-Gammaの数値に極めて近い場合、2つの垂直線や文字が重なって表示されることがあります。<br><br>
+            <strong>見分け方:</strong> スポット価格は<strong>「黄色の実線（ラベルは右下）」</strong>、ゼロガンマは<strong>「赤の一点鎖線（ラベルは左上）」</strong>です。ダッシュボードはインタラクティブ（操作可能）に作られているため、パソコンのマウスやスマホの指で<strong>線の上にカーソルを合わせる（ホバーする）と、正確な数値がポップアップで個別に表示されます。</strong><br><br>
+            <strong>相場の意味（超重要）:</strong> この2つの線が重なっている時は、見にくいエラーではなく<strong>「相場の天気が『晴れ』から『嵐』に変わるかどうかの、まさに瀬戸際（極めて重要な分岐点）」</strong>にいることを意味します。どちらに抜け出すか、最も慎重に観察し、チャンスに備えるべきタイミングです。
+        </div>
+
+        <h2>2. 初心者向け必須用語ガイド</h2>
+        <p>オプションの難しい数式を覚える必要はありません。これだけ知っていればダッシュボードは読めます。</p>
+        <ul>
+            <li><strong>GEX (Gamma Exposure / ガンマ・エクスポージャー):</strong><br>相場を裏で操るマーケットメーカー（MM）が、リスク回避のために「どれくらいの量を自動的に売り買いしなければならないか」を示す数値。相場の「見えない壁」の強さです。</li>
+            <li><strong>Call GEX (コール・ガンマ):</strong><br>相場の<strong>「上値の重さ（天井）」</strong>。グラフでは<span class="color-box cyan"></span><strong>シアン色</strong>。ここに価格が近づくと、MMが「売り」を浴びせてくるため、価格が下へ跳ね返されやすくなります。</li>
+            <li><strong>Put GEX (プット・ガンマ):</strong><br>相場の<strong>「下値の堅さ（床）」</strong>。グラフでは<span class="color-box magenta"></span><strong>マゼンタ色</strong>。ここに価格が近づくと、MMが「買い」を入れてくるため、価格が上へ支えられやすくなります。</li>
+            <li><strong>Net GEX (ネット・ガンマ):</strong><br>Call GEXとPut GEXを足し引きした<strong>「最終的なMMの圧力」</strong>。グラフの<strong>白い折れ線</strong>です。この線がゼロより上なら相場は安定しやすく、下なら不安定（暴走気味）になります。</li>
+            <li><strong>IV (Implied Volatility / インプライド・ボラティリティ):</strong><br>プロの投資家たちが予想している<strong>「これからの値動きの激しさ（荒れ具合）」</strong>。下段の<strong>オレンジ色の線</strong>です。「VIX指数（恐怖指数）」の個別銘柄版と考えてください。</li>
+            <li><strong>Zero-Gamma (ゼロガンマ・フリップ):</strong><br>相場の天気が変わる<strong>「境界線」</strong>。グラフでは<span class="color-box red"></span><strong>赤色の線</strong>です。MMの行動が「逆張り（相場を落ち着かせる）」から「順張り（相場を暴走させる）」に切り替わる、最も危険で重要な価格帯です。</li>
+            <li><strong>Current Spot (カレント・スポット):</strong><br>現在の<strong>「取引価格（現在地）」</strong>。グラフでは<span class="color-box yellow"></span><strong>黄色の線</strong>です。この現在地がZero-Gammaより右（上）か左（下）かで、今日の戦い方を決めます。</li>
+        </ul>
+
+        <h2>3. 天気（レジーム）判定とトレード戦略</h2>
+        <p>毎朝、Spot（黄色）とZero-Gamma（赤）の位置関係を見て、今日の天気を判定してください。</p>
+
+        <h3>☀️ 天気：晴れ（ポジティブ・ガンマ）</h3>
+        <p><strong>【条件】Spot（黄色） ＞ Zero-Gamma（赤）</strong><br>現在価格が赤線より右側（上）にある状態です。</p>
+        <ul>
+            <li><strong>相場の特徴:</strong> ボラティリティ（値動きの激しさ）が低下し、価格が「シアンの壁」と「マゼンタの壁」の間を行ったり来たりする「ピンボール相場（レンジ相場）」になります。</li>
+            <li><strong>あなたの戦略: 【逆張り（押し目買い・戻り売り）】</strong>
+                <ul>
+                    <li><strong>アクション①:</strong> 価格が下のマゼンタの壁（Put Wall）に近づいたら、「買い（ロング）」を狙います。MMが支えてくれるからです。</li>
+                    <li><strong>アクション②:</strong> 価格が上のシアンの壁（Call Wall）に近づいたら、持っているロングを「利確」するか、新規で「売り（ショート）」を狙います。</li>
+                    <li><strong>NG行動:</strong> ブレイクアウト（壁を突き抜けること）を期待した順張りはダマシに遭いやすいため厳禁です。</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h3>⛈️ 天気：嵐（ネガティブ・ガンマ）</h3>
+        <p><strong>【条件】Spot（黄色） ＜ Zero-Gamma（赤）</strong><br>現在価格が赤線より左側（下）にある状態です。</p>
+        <ul>
+            <li><strong>相場の特徴:</strong> MMの行動が「下がったらさらに売り、上がったらさらに買う」というパニック状態に陥ります。壁が壁として機能せず、値動きが暴走（急落や踏み上げ）しやすくなります。</li>
+            <li><strong>あなたの戦略: 【順張り（トレンドフォロー）】</strong>
+                <ul>
+                    <li><strong>アクション:</strong> 相場が向かっている方向（特に下落方向）へ、モメンタムに乗って「順張り」します。サポートライン（マゼンタの壁）をあっさり下抜けることが多いので、ブレイクアウト・ショートが有効です。</li>
+                    <li><strong>NG行動:</strong> 「ここまで下がったからそろそろ反発するだろう」という<strong>値ごろ感での逆張り買い（ナンピン）は絶対厳禁</strong>です。MMと一緒にパニック売りに巻き込まれて焼かれます。</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h2>4. 実戦シミュレーション（現在の銀先物のケース）</h2>
+        <p>実際のダッシュボードの画像と数値を例に、具体的なトレードプランを解説します。</p>
+        
+        <!-- 画像の読み込み（同じフォルダに newplot.png が必要です） -->
+        <img src="newplot.png" alt="GEX Radar Screenshot">
+
+        <ul>
+            <li><strong>今日の天気:</strong> Spot (62.08) &lt; Zero-Gamma (63.66) なので、判定は <strong>「嵐（ネガティブ・ガンマ）」</strong> です。</li>
+            <li><strong>壁の位置:</strong> 下の強力なサポートが <code>60.00</code> と <code>55.00</code>。上のレジスタンスが <code>62.50</code> と <code>65.00</code>。</li>
+        </ul>
+
+        <p><strong>【具体的なトレードプラン】</strong></p>
+        <ol>
+            <li><strong>基本はショート（売り）目線:</strong> 現在地は「嵐（ネガティブ・ガンマ）」の領域です。相場は自律反発する力を失っており、下落に勢いがつきやすい状態です。むやみに買うのではなく、反発したところを叩く「戻り売り（ショート）」が基本戦略となります。</li>
+            <li><strong>利確ポイント（ターゲット）:</strong> 下落トレンドに乗れた場合、次の大きな目標（ターゲット）は、強烈な Put GEX が待ち構えている <code>60.00</code> の壁になります。欲張らずにこの手前（例: 60.20付近）で確実に利確（買い戻し）をします。</li>
+            <li><strong>撤退ライン（損切り）:</strong> もし相場が予想に反して上昇し、赤線（63.66）を明確に上抜けた場合、相場の天気が「晴れ」に変わってしまいます。ショートの前提条件が完全に崩れるため、ここが絶対の撤退（損切り）ラインとなります。</li>
+        </ol>
+
+        <h2>5. 運用上の注意点（プロのルーチン）</h2>
+        <ol>
+            <li><strong>毎朝のデータ更新を怠らない:</strong> オプションの建玉（壁の位置）は毎日変化します。古い天気予報で海に出るのは危険です。必ず最新のCSVを配置して更新してください。</li>
+            <li><strong>CFD価格との「ベーシス」に注意:</strong> Barchartは先物価格、あなたのCFD口座の価格表示はブローカーによって微妙にズレていることがあります。「チャートの形と壁の相対的な位置」をCFDのチャートに当てはめて考えてください。</li>
+            <li><strong>万能ではない:</strong> GEXは「相場の重力」を示しますが、戦争や突発的な経済指標（CPIや雇用統計）など、強烈なファンダメンタルズの衝撃は一時的にこの重力を破壊します。指標発表前はポジションを軽くするのが鉄則です。</li>
+        </ol>
+    </div>
+</body>
+</html>
