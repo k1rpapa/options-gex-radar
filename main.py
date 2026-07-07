@@ -74,7 +74,6 @@ def load_barchart_csv(prefix_pattern):
     df = pd.merge(df_sb_clean, df_gk_clean, on='Strike', how='inner')
     
     def clean_col(series, is_iv=False):
-        # 天然ガスの「欠損データ(nan)」も安全に0へ変換する
         s = series.astype(str).str.replace('%', '', regex=False)\
                               .str.replace(',', '', regex=False)\
                               .str.replace('N/A', '0', regex=False)\
@@ -139,19 +138,11 @@ def export_dashboard(df, spot, expiry, output_path, config):
     
     df_zoom = df[(df['Strike'] >= spot * 0.7) & (df['Strike'] <= spot * 1.3)].copy()
     
-    # --- ボラティリティ・スマイルの抽出（多項式回帰フィッティング） ---
-    # 流動性が極端に低いノイズを排除するため、建玉(OI)が一定以上あるストライクのみを抽出
-    valid_mask = (df_zoom['Call_OI'] + df_zoom['Put_OI']) > 10
-    df_valid = df_zoom[valid_mask & (df_zoom['IV'] > 0)].copy()
-    
-    # 2次関数（放物線）でIVのトレンドラインを数学的に算出
-    if len(df_valid) >= 3:
-        z = np.polyfit(df_valid['Strike'], df_valid['IV'], 2)
-        p = np.poly1d(z)
-        # 極端な外挿によるマイナス値を防ぐため 0.01 でクリップ
-        df_zoom['IV_Fit'] = np.clip(p(df_zoom['Strike']), 0.01, None)
-    else:
-        df_zoom['IV_Fit'] = df_zoom['IV'] # データ不足時のフェイルセーフ
+    # --- IVノイズフィルター (マイルド版: 生データの歪みを残す) ---
+    iv_series = df_zoom["IV"].replace(0, np.nan)
+    # 中央値を計算し、その2.5倍を超えるような「明らかな異常値（バグ）」だけを排除
+    iv_median = iv_series.median()
+    df_zoom["IV_plot"] = np.where(iv_series > iv_median * 2.5, np.nan, iv_series)
     
     is_positive = spot > flip_point
     regime_text = "🟢 POSITIVE GAMMA REGIME (押し目買い優位)" if is_positive else "🔴 NEGATIVE GAMMA REGIME (ブレイクアウト・順張り優位)"
@@ -159,7 +150,7 @@ def export_dashboard(df, spot, expiry, output_path, config):
     
     fig = make_subplots(
         rows=2, cols=1, row_heights=[0.7, 0.3],
-        subplot_titles=(f"Dealer Net GEX Profile<br><b style='color:{regime_color}; font-size:16px;'>{regime_text}</b>", "Implied Volatility Smile (Fitted Curve)"),
+        subplot_titles=(f"Dealer Net GEX Profile<br><b style='color:{regime_color}; font-size:16px;'>{regime_text}</b>", "Implied Volatility Smile"),
         shared_xaxes=True, vertical_spacing=0.07
     )
     
@@ -180,9 +171,8 @@ def export_dashboard(df, spot, expiry, output_path, config):
                   annotation=dict(font=dict(color="black", size=13), bgcolor="rgba(255,255,0,0.8)", bordercolor="yellow", borderwidth=1),
                   row=1, col=1)
         
-    # --- グラフ描画: 生データは薄い点で表示し、フィッティングした美しいスマイルカーブを実線で描画 ---
-    fig.add_trace(go.Scatter(x=df_zoom["Strike"], y=df_zoom["IV"]*100, name="IV (Raw Noise)", mode="markers", marker=dict(color="rgba(255, 165, 0, 0.3)", size=5)), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df_zoom["Strike"], y=df_zoom["IV_Fit"]*100, name="IV Smile (Trend)", mode="lines", line=dict(color="orange", width=3, shape='spline')), row=2, col=1)
+    # 生データのギザギザを線で繋ぐ (connectgaps=True)
+    fig.add_trace(go.Scatter(x=df_zoom["Strike"], y=df_zoom["IV_plot"]*100, name="IV", mode="lines+markers", line_color="orange", connectgaps=True), row=2, col=1)
     
     fig.update_layout(
         title=f"Quant Options Radar: {config['name']} | Expiry: {expiry}",
