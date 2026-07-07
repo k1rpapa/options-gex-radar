@@ -153,6 +153,10 @@ def export_dashboard(df, spot, expiry, output_path):
 
 if __name__ == "__main__":
     DOCS_DIR.mkdir(exist_ok=True)
+
+    # 追加: Jekyllビルドを回避するための空ファイルを docs/ 内に強制生成
+    (DOCS_DIR / ".nojekyll").touch()
+    
     try:
         df, expiry = load_barchart_csv()
         spot = fetch_futures_spot()
