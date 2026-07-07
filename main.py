@@ -145,22 +145,22 @@ def export_dashboard(df, spot, expiry, output_path, config):
         
     fig.add_trace(go.Scatter(x=df_zoom["Strike"], y=df_zoom["IV_plot"]*100, name="IV", mode="lines+markers", line_color="orange", connectgaps=True), row=2, col=1)
     
-    # --- 超重要: グラフ自体のサイズをピクセルで強力に固定 ---
     fig.update_layout(
         title=f"Quant Options Radar: {config['name']} | Expiry: {expiry}",
         template="plotly_dark", 
-        width=1200,  # 幅を1200pxに強制固定（スマホが勝手に縮小するのを防ぐ）
-        height=850,  # 縦幅も指定
+        height=850,
+        margin=dict(t=120),
         barmode='relative', hovermode='x unified',
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        dragmode=False,  # --- 重要: グラフ上でのスワイプ拡大を無効化し、スマホの横スクロールを優先させる ---
+        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
     )
     fig.update_yaxes(title_text="GEX ($M)", row=1, col=1)
     fig.update_yaxes(title_text="IV (%)", row=2, col=1)
     fig.update_xaxes(title_text="Strike Price", row=2, col=1)
     
-    fig.write_html(output_path, include_plotlyjs="cdn", full_html=True)
+    # --- 重要: ツールバー非表示 (config={'displayModeBar': False}) にして誤操作を防ぐ ---
+    fig.write_html(output_path, include_plotlyjs="cdn", full_html=True, config={'displayModeBar': False})
 
-    # --- モバイル完全対応のViewport制御とHTML/CSSの注入 ---
     with open(output_path, 'r', encoding='utf-8') as f:
         html_content = f.read()
     
@@ -180,13 +180,13 @@ def export_dashboard(df, spot, expiry, output_path, config):
         .chart-scroll-container {
             width: 100%;
             overflow-x: auto;
-            -webkit-overflow-scrolling: touch; /* スマホでの滑らかな横スクロール */
+            -webkit-overflow-scrolling: touch;
         }
         .chart-wrapper {
+            width: 100%;
+            min-width: 1100px;
             margin: 0 auto;
-            width: 1200px; /* PCの大画面でグラフを中央寄せにする */
         }
-        /* スマホ向けのレイアウト切り替え */
         @media screen and (max-width: 800px) {
             .mobile-notice { display: block; }
             .nav-bar a { font-size: 12px; margin: 0 3px; }
@@ -207,9 +207,25 @@ def export_dashboard(df, spot, expiry, output_path, config):
         <div class="chart-wrapper">
     """
     
+    # --- 重要: スマホで開いた瞬間に、グラフの「中央(Spot付近)」へ自動スクロールする魔法 ---
+    scroll_script = """
+        </div>
+    </div>
+    <script>
+        window.addEventListener('load', function() {
+            var container = document.querySelector('.chart-scroll-container');
+            if (container) {
+                // コンテナの幅の半分スクロールさせることで、常に中央(Spot付近)を表示
+                container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2;
+            }
+        });
+    </script>
+    </body>
+    """
+    
     html_content = html_content.replace('<head>', f'<head>\n{custom_head}')
     html_content = html_content.replace('<body>', nav_and_container)
-    html_content = html_content.replace('</body>', '</div></div></body>')
+    html_content = html_content.replace('</body>', scroll_script)
     
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
