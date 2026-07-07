@@ -12,28 +12,42 @@ from plotly.subplots import make_subplots
 ROOT_DIR = Path(__file__).parent.resolve()
 DOCS_DIR = ROOT_DIR / "docs"
 
-def load_barchart_csv():
-    """リポジトリ内のBarchartのCSVを自動スキャンして結合・パースする"""
-    side_by_side_files = glob.glob("*side-by-side*.csv")
-    greeks_files = glob.glob("*volatility-greeks*.csv")
+# 複数アセットの定義とマルチプライヤー設定
+ASSET_CONFIG = {
+    "SI": {
+        "name": "銀先物 (SI)",
+        "ticker": "SI=F",
+        "multiplier": 5000,
+        "filename": "index.html"
+    },
+    "NG": {
+        "name": "天然ガス先物 (NG)",
+        "ticker": "NG=F",
+        "multiplier": 10000,
+        "filename": "ng.html"
+    }
+}
+
+def load_barchart_csv(prefix_pattern):
+    """プレフィックス（例: si, ng）に合致する最新のCSVペアを読み込む"""
+    sb_files = sorted(glob.glob(f"{prefix_pattern}*side-by-side*.csv"))
+    gk_files = sorted(glob.glob(f"{prefix_pattern}*volatility-greeks*.csv"))
     
-    if not side_by_side_files or not greeks_files:
-        raise FileNotFoundError("BarchartのCSV(side-by-side または volatility-greeks)が見つかりません。")
+    if not sb_files or not gk_files:
+        return None, None
         
-    sb_path = sorted(side_by_side_files)[-1]
-    gk_path = sorted(greeks_files)[-1]
+    sb_path = sb_files[-1]
+    gk_path = gk_files[-1]
     
-    print(f"[Loading] 建玉データ: {sb_path}")
-    print(f"[Loading] ギリシャ・IVデータ: {gk_path}")
+    print(f"[{prefix_pattern.upper()} Loading] 建玉データ: {sb_path}")
+    print(f"[{prefix_pattern.upper()} Loading] ギリシャ・IVデータ: {gk_path}")
     
     df_sb = pd.read_csv(sb_path)
     df_gk = pd.read_csv(gk_path)
     
-    # カラム名の前後の空白を除去
     df_sb.columns = [str(c).strip() for c in df_sb.columns]
     df_gk.columns = [str(c).strip() for c in df_gk.columns]
     
-    # 動的なカラム検知ロジック
     oi_candidates = ['Open Int', 'OI', 'Open Interest']
     call_oi_col, put_oi_col = None, None
     for col in oi_candidates:
@@ -51,22 +65,20 @@ def load_barchart_csv():
     if not call_oi_col or not call_iv_col:
         raise KeyError(f"必要なカラムが見つかりません。OI候補: {call_oi_col}, IV候補: {call_iv_col}")
         
-    print(f"[検知成功] OIカラム: '{call_oi_col}' / IVカラム: '{call_iv_col}'")
-    
     sb_map = {'Strike': 'Strike', call_oi_col: 'Call_OI', put_oi_col: 'Put_OI'}
     gk_map = {'Strike': 'Strike', call_iv_col: 'Call_IV', put_iv_col: 'Put_IV'}
     
     df_sb_clean = df_sb[['Strike', call_oi_col, put_oi_col]].rename(columns=sb_map)
     df_gk_clean = df_gk[['Strike', call_iv_col, put_iv_col]].rename(columns=gk_map)
         
-    # Strikeをキーに内部結合
     df = pd.merge(df_sb_clean, df_gk_clean, on='Strike', how='inner')
     
-    # データクレンジング: 強制的に文字列変換してからパースし、エラーを防ぐ
     def clean_col(series, is_iv=False):
+        # 天然ガスの「欠損データ(nan)」も安全に0へ変換する
         s = series.astype(str).str.replace('%', '', regex=False)\
                               .str.replace(',', '', regex=False)\
                               .str.replace('N/A', '0', regex=False)\
+                              .str.replace('nan', '0', regex=False)\
                               .str.replace('-', '0', regex=False)\
                               .str.strip()
         s_num = pd.to_numeric(s, errors='coerce').fillna(0)
@@ -80,22 +92,20 @@ def load_barchart_csv():
     df = df.fillna(0)
     df['IV'] = df[['Call_IV', 'Put_IV']].mean(axis=1)
     
-    expiry_info = "SI (COMEX)"
+    expiry_info = "Unknown"
     if "exp-" in sb_path:
-        expiry_info = sb_path.split("exp-")[1].split("-")[0]
+        expiry_info = os.path.basename(sb_path).split("exp-")[1].split("-")[0]
         
     return df.sort_values("Strike", ascending=False), expiry_info
 
-def fetch_futures_spot():
-    """最新の銀先物(中心限月)のスポット価格を取得"""
-    tkr = yf.Ticker("SI=F")
+def fetch_futures_spot(ticker):
+    tkr = yf.Ticker(ticker)
     hist = tkr.history(period="1d")
     if hist.empty:
-        raise ValueError("yfinanceから先物スポット価格の取得に失敗しました。")
+        raise ValueError(f"yfinanceから {ticker} のスポット価格取得に失敗しました。")
     return hist['Close'].iloc[-1]
 
-def calculate_gex(df, spot, multiplier=5000):
-    """COMEX銀先物のマルチプライヤー（$5,000）を適用した本格GEX計算"""
+def calculate_gex(df, spot, multiplier):
     df = df[(df['Call_OI'] > 0) | (df['Put_OI'] > 0)].copy()
     T = 22 / 365.0 
     r = 0.045
@@ -124,19 +134,23 @@ def extract_flip_point(df, spot):
     if x1 - x0 == 0: return y0
     return y0 - (x0 * (y1 - y0) / (x1 - x0))
 
-def export_dashboard(df, spot, expiry, output_path):
+def export_dashboard(df, spot, expiry, output_path, config):
     flip_point = extract_flip_point(df, spot)
     
-    df_zoom = df[(df['Strike'] >= spot * 0.7) & (df['Strike'] <= spot * 1.3)]
+    df_zoom = df[(df['Strike'] >= spot * 0.7) & (df['Strike'] <= spot * 1.3)].copy()
     
-    # --- UI改善: レジーム判定と視覚的フィードバック ---
+    # --- IVノイズフィルター ---
+    # 過疎地の極端なIVスパイク（中央値の2.5倍以上）を描画から除外し、スマイル曲線を綺麗に保つ
+    iv_median = df_zoom["IV"].median()
+    df_zoom["IV_plot"] = np.where(df_zoom["IV"] > iv_median * 2.5, np.nan, df_zoom["IV"])
+    
     is_positive = spot > flip_point
     regime_text = "🟢 POSITIVE GAMMA REGIME (押し目買い優位)" if is_positive else "🔴 NEGATIVE GAMMA REGIME (ブレイクアウト・順張り優位)"
     regime_color = "#00FF00" if is_positive else "#FF4444"
     
     fig = make_subplots(
         rows=2, cols=1, row_heights=[0.7, 0.3],
-        subplot_titles=(f"COMEX Silver Futures Dealer Net GEX Profile<br><b style='color:{regime_color}; font-size:16px;'>{regime_text}</b>", "Implied Volatility Smile"),
+        subplot_titles=(f"Dealer Net GEX Profile<br><b style='color:{regime_color}; font-size:16px;'>{regime_text}</b>", "Implied Volatility Smile (Noise Filtered)"),
         shared_xaxes=True, vertical_spacing=0.07
     )
     
@@ -144,27 +158,23 @@ def export_dashboard(df, spot, expiry, output_path):
     fig.add_trace(go.Bar(x=df_zoom["Strike"], y=df_zoom["Put_GEX"], name="Put GEX (サポート)", marker_color="rgba(255, 0, 255, 0.7)"), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_zoom["Strike"], y=df_zoom["Net_GEX"], name="Net GEX", mode="lines+markers", line=dict(color="white", width=2)), row=1, col=1)
     
-    # --- UI改善: 線が重なっても読めるようにラベルを分離＆背景色追加 ---
-    
-    # 1. Zero-Gamma (赤色・上部配置)
     if not np.isnan(flip_point):
         fig.add_vline(x=flip_point, line=dict(color="red", width=2, dash="dashdot"), 
-                      annotation_text=f"Zero-Gamma<br>{flip_point:.2f}", 
+                      annotation_text=f"Zero-Gamma<br>{flip_point:.3f}", 
                       annotation_position="top left", 
                       annotation=dict(font=dict(color="white", size=13), bgcolor="rgba(255,0,0,0.6)", bordercolor="red", borderwidth=1),
                       row=1, col=1)
 
-    # 2. Spot (黄色・下部配置)
     fig.add_vline(x=spot, line=dict(color="yellow", width=2, dash="solid"), 
-                  annotation_text=f"Current Spot<br>{spot:.2f}", 
+                  annotation_text=f"Current Spot<br>{spot:.3f}", 
                   annotation_position="bottom right", 
                   annotation=dict(font=dict(color="black", size=13), bgcolor="rgba(255,255,0,0.8)", bordercolor="yellow", borderwidth=1),
                   row=1, col=1)
         
-    fig.add_trace(go.Scatter(x=df_zoom["Strike"], y=df_zoom["IV"]*100, name="IV", mode="lines+markers", line_color="orange"), row=2, col=1)
+    fig.add_trace(go.Scatter(x=df_zoom["Strike"], y=df_zoom["IV_plot"]*100, name="IV", mode="lines+markers", line_color="orange"), row=2, col=1)
     
     fig.update_layout(
-        title=f"Quant Options Radar: 銀先物 (SI) | Expiry: {expiry}",
+        title=f"Quant Options Radar: {config['name']} | Expiry: {expiry}",
         template="plotly_dark", height=950, barmode='relative', hovermode='x unified',
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
@@ -174,16 +184,40 @@ def export_dashboard(df, spot, expiry, output_path):
     
     fig.write_html(output_path, include_plotlyjs="cdn", full_html=True)
 
+    # --- グローバル・ナビゲーション・バーの注入 ---
+    with open(output_path, 'r', encoding='utf-8') as f:
+        html_content = f.read()
+    
+    nav_html = f"""
+    <div style="padding: 12px; background-color: #111; text-align: center; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 9999;">
+        <a href="index.html" style="color: #00FFFF; margin: 0 15px; text-decoration: none; font-family: sans-serif; font-weight: bold; font-size: 16px;">🪙 Silver (SI)</a>
+        <a href="ng.html" style="color: #FF00FF; margin: 0 15px; text-decoration: none; font-family: sans-serif; font-weight: bold; font-size: 16px;">🔥 Natural Gas (NG)</a>
+        <a href="gex_trading_guide.html" style="color: #FFFF00; margin: 0 15px; text-decoration: none; font-family: sans-serif; font-weight: bold; font-size: 16px;">📖 Trading Manual</a>
+    </div>
+    """
+    html_content = html_content.replace('<body>', f'<body style="margin:0;">\n{nav_html}')
+    
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+
 if __name__ == "__main__":
     DOCS_DIR.mkdir(exist_ok=True)
-    
-    # Jekyllビルド回避用の空ファイルを強制生成
     (DOCS_DIR / ".nojekyll").touch()
     
-    df, expiry = load_barchart_csv()
-    spot = fetch_futures_spot()
-    df = calculate_gex(df, spot)
-    
-    output_path = DOCS_DIR / "index.html"
-    export_dashboard(df, spot, expiry, str(output_path))
-    print(f"[SUCCESS] Real Futures GEX Dashboard generated at: {output_path}")
+    # 全アセットの処理を自動ループ
+    for asset_key, config in ASSET_CONFIG.items():
+        prefix = asset_key.lower() # 'si' または 'ng'
+        try:
+            df, expiry = load_barchart_csv(prefix)
+            if df is not None:
+                spot = fetch_futures_spot(config["ticker"])
+                df = calculate_gex(df, spot, multiplier=config["multiplier"])
+                
+                output_path = DOCS_DIR / config["filename"]
+                export_dashboard(df, spot, expiry, str(output_path), config)
+                print(f"[SUCCESS] {config['name']} Dashboard generated at: {output_path}")
+            else:
+                print(f"[SKIP] {config['name']} のCSVが見つかりません。")
+        except Exception as e:
+            print(f"[ERROR] {config['name']} の処理中にエラーが発生しました: {e}")
+            raise e
