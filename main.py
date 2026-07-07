@@ -182,6 +182,10 @@ def export_dashboard(df, spot, expiry, output_path, config):
             overflow-x: auto;
             -webkit-overflow-scrolling: touch; /* スマホでの滑らかな横スクロール */
         }
+        .chart-wrapper {
+            margin: 0 auto;
+            width: 1200px; /* PCの大画面でグラフを中央寄せにする */
+        }
         /* スマホ向けのレイアウト切り替え */
         @media screen and (max-width: 800px) {
             .mobile-notice { display: block; }
@@ -200,11 +204,12 @@ def export_dashboard(df, spot, expiry, output_path, config):
     </div>
     <div class="mobile-notice">📱 グラフを左右にスワイプして詳細を確認できます</div>
     <div class="chart-scroll-container">
+        <div class="chart-wrapper">
     """
     
     html_content = html_content.replace('<head>', f'<head>\n{custom_head}')
     html_content = html_content.replace('<body>', nav_and_container)
-    html_content = html_content.replace('</body>', '</div></body>')
+    html_content = html_content.replace('</body>', '</div></div></body>')
     
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
