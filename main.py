@@ -167,6 +167,6 @@ if __name__ == "__main__":
     spot = fetch_futures_spot()
     df = calculate_gex(df, spot)
     
-    output_path = DOCS_DIR / "slv.html"
+    output_path = DOCS_DIR / "index.html"
     export_dashboard(df, spot, expiry, str(output_path))
     print(f"[SUCCESS] Real Futures GEX Dashboard generated at: {output_path}")
