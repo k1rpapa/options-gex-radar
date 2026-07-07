@@ -141,18 +141,14 @@ def export_dashboard(df, spot, expiry, output_path):
 
 if __name__ == "__main__":
     DOCS_DIR.mkdir(exist_ok=True)
-
-    # 追加: Jekyllビルドを回避するための空ファイルを docs/ 内に強制生成
+    # Jekyllビルド回避用の空ファイル
     (DOCS_DIR / ".nojekyll").touch()
     
-    try:
-        df, expiry = load_barchart_csv()
-        spot = fetch_futures_spot()
-        df = calculate_gex(df, spot)
-        
-        output_path = DOCS_DIR / "slv.html"
-        export_dashboard(df, spot, expiry, str(output_path))
-        print(f"[SUCCESS] Real Futures GEX Dashboard generated at: {output_path}")
-        
-    except Exception as e:
-        print(f"[ERROR] パイプライン実行失敗: {e}")
+    # エラーを握りつぶさず、原因を特定するために例外をそのまま発生させる
+    df, expiry = load_barchart_csv()
+    spot = fetch_futures_spot()
+    df = calculate_gex(df, spot)
+    
+    output_path = DOCS_DIR / "slv.html"
+    export_dashboard(df, spot, expiry, str(output_path))
+    print(f"[SUCCESS] Real Futures GEX Dashboard generated at: {output_path}")
