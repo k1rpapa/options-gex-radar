@@ -5,19 +5,11 @@ on:
     - cron: '30 21 * * *'
   workflow_dispatch:
 
-# Pagesへのデプロイに必要な権限を付与
 permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-# 同時実行をキャンセル
-concurrency:
-  group: "pages"
-  cancel-in-progress: true
+  contents: write
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -36,29 +28,23 @@ jobs:
 
       - name: Execute Quant Engine
         run: |
-          # docsディレクトリをクリーンアップ
-          rm -rf docs
-          mkdir docs
+          # docsディレクトリを確実に作成（エラー回避）
+          mkdir -p docs
           
-          # .nojekyllを生成
+          # 【最重要】Jekyllの勝手なビルドを殺すファイルをdocs内に強制配置
           touch docs/.nojekyll
           
-          # HTMLを生成
+          # HTMLを生成（CSVがルートにあればここで読み込まれます）
           python main.py
 
-      - name: Upload artifact for GitHub Pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          # docsフォルダの中身をアーティファクトとしてアップロード
-          path: './docs'
-
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Commit and Push to main
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # .nojekyllも含め、docs内の全ファイルを強制的にGitの追跡対象にする
+          git add -f docs/
+          
+          # コミットしてmainブランチへ直接Push
+          git commit -m "chore: Auto-update GEX Radar and bypass Jekyll" || exit 0
+          git push origin main
