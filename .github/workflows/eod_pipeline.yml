@@ -5,11 +5,19 @@ on:
     - cron: '30 21 * * *'
   workflow_dispatch:
 
+# Pagesへのデプロイに必要な権限を付与
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時実行をキャンセル
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -28,16 +36,29 @@ jobs:
 
       - name: Execute Quant Engine
         run: |
-          # 実行前に既存のアーティファクトをクリーンアップ
-          rm -rf docs/*
+          # docsディレクトリをクリーンアップ
+          rm -rf docs
+          mkdir docs
+          
+          # .nojekyllを生成
+          touch docs/.nojekyll
+          
+          # HTMLを生成
           python main.py
 
-      - name: Commit and Push to main
-        run: |
-          # GitHub Actions Botとして main ブランチの docs/ 配下へ直接コミット
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add docs/
-          # 差分がない場合（休場日など）はエラーにせずスキップ
-          git commit -m "chore: Daily GEX Profile Update [skip ci]" || exit 0
-          git push origin main
+      - name: Upload artifact for GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # docsフォルダの中身をアーティファクトとしてアップロード
+          path: './docs'
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
