@@ -14,66 +14,54 @@ DOCS_DIR = ROOT_DIR / "docs"
 
 def load_barchart_csv():
     """リポジトリ内のBarchartのCSVを自動スキャンして結合・パースする"""
-    # 1. ファイルの自動検知
+    import glob
     side_by_side_files = glob.glob("*side-by-side*.csv")
     greeks_files = glob.glob("*volatility-greeks*.csv")
     
     if not side_by_side_files or not greeks_files:
-        raise FileNotFoundError("BarchartからダウンロードしたCSVファイル(side-by-side または volatility-greeks)がルートディレクトリに見つかりません。")
+        raise FileNotFoundError("BarchartのCSV(side-by-side または volatility-greeks)が見つかりません。")
         
-    # 最新のファイルを採用
     sb_path = sorted(side_by_side_files)[-1]
     gk_path = sorted(greeks_files)[-1]
     
     print(f"[Loading] 建玉データ: {sb_path}")
     print(f"[Loading] ギリシャ・IVデータ: {gk_path}")
     
-    # 2. CSVの読み込み (Barchartのヘッダー形式に柔軟に対応)
     df_sb = pd.read_csv(sb_path)
     df_gk = pd.read_csv(gk_path)
     
-    # カラム名の前後の空白を削除
-    df_sb.columns = [c.strip() for c in df_sb.columns]
-    df_gk.columns = [c.strip() for c in df_gk.columns]
+    # カラム名の前後の空白を除去
+    df_sb.columns = [str(c).strip() for c in df_sb.columns]
+    df_gk.columns = [str(c).strip() for c in df_gk.columns]
     
-    # 3. 必要なカラムの抽出と正規化
-    # side-by-side から建玉(Open Interest)を取得
-    sb_cols = {
-        'Strike': 'Strike',
-        'Call Open Int': 'Call_OI',
-        'Put Open Int': 'Put_OI'
-    }
-    # Barchartの表記揺れに対応するためのマッピング
-    df_sb_renamed = df_sb.rename(columns=lambda x: next((v for k, v in sb_cols.items() if k in x), x))
+    # Barchart仕様: CallとPutで同名カラムが存在するため、
+    # Pandasが自動的に右側(Put)を '.1' とリネームする仕様に完全対応
+    sb_map = {'Strike': 'Strike', 'Open Int': 'Call_OI', 'Open Int.1': 'Put_OI'}
+    gk_map = {'Strike': 'Strike', 'Implied Vol': 'Call_IV', 'Implied Vol.1': 'Put_IV'}
     
-    # volatility-greeks からインプライド・ボラティリティ(IV)を取得
-    gk_cols = {
-        'Strike': 'Strike',
-        'Call Implied Vol': 'Call_IV',
-        'Put Implied Vol': 'Put_IV'
-    }
-    df_gk_renamed = df_gk.rename(columns=lambda x: next((v for k, v in gk_cols.items() if k in x), x))
+    try:
+        df_sb_clean = df_sb[['Strike', 'Open Int', 'Open Int.1']].rename(columns=sb_map)
+        df_gk_clean = df_gk[['Strike', 'Implied Vol', 'Implied Vol.1']].rename(columns=gk_map)
+    except KeyError as e:
+        raise KeyError(f"Barchart CSVのカラム解析に失敗しました。詳細: {e}")
+        
+    # Strikeをキーに内部結合
+    df = pd.merge(df_sb_clean, df_gk_clean, on='Strike', how='inner')
     
-    # 4. Strikeをキーにしてマージ
-    df = pd.merge(
-        df_sb_renamed[['Strike', 'Call_OI', 'Put_OI']],
-        df_gk_renamed[['Strike', 'Call_IV', 'Put_IV']],
-        on='Strike', how='inner'
-    )
-    
-    # 文字列型のカンマ除去や数値型への変換
+    # データクレンジング (カンマ除去, Barchart特有の '-' や 'N/A' を '0' に変換)
     for col in ['Call_OI', 'Put_OI']:
         if df[col].dtype == 'object':
-            df[col] = df[col].str.replace(',', '').astype(float)
+            df[col] = df[col].astype(str).str.replace(',', '').str.replace('N/A', '0').str.replace('-', '0').astype(float)
             
     for col in ['Call_IV', 'Put_IV']:
         if df[col].dtype == 'object':
-            df[col] = df[col].str.replace('%', '').str.replace(',', '').astype(float) / 100.0
+            df[col] = df[col].astype(str).str.replace('%', '').str.replace(',', '').str.replace('N/A', '0').str.replace('-', '0').astype(float) / 100.0
             
+    df = df.fillna(0)
     df['IV'] = df[['Call_IV', 'Put_IV']].mean(axis=1)
     
-    # 限月情報をファイル名から簡易抽出（例：07_28_26）
-    expiry_info = "SIU26 (COMEX)"
+    # 限月の抽出
+    expiry_info = "SI (COMEX)"
     if "exp-" in sb_path:
         expiry_info = sb_path.split("exp-")[1].split("-")[0]
         
