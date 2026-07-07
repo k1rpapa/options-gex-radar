@@ -62,15 +62,13 @@ def load_barchart_csv():
     # Strikeをキーに内部結合
     df = pd.merge(df_sb_clean, df_gk_clean, on='Strike', how='inner')
     
-    # データクレンジング: dtype判定を外し、強制的に文字列変換してからパースする
+    # データクレンジング: 強制的に文字列変換してからパースし、エラーを防ぐ
     def clean_col(series, is_iv=False):
-        # 全ての文字を一旦文字列としてクレンジング (regex=Falseで警告回避)
         s = series.astype(str).str.replace('%', '', regex=False)\
                               .str.replace(',', '', regex=False)\
                               .str.replace('N/A', '0', regex=False)\
                               .str.replace('-', '0', regex=False)\
                               .str.strip()
-        # 強制的に数値化（変換できない不正な文字はNaNになり、その後0で埋められる）
         s_num = pd.to_numeric(s, errors='coerce').fillna(0)
         return s_num / 100.0 if is_iv else s_num
 
@@ -131,25 +129,44 @@ def export_dashboard(df, spot, expiry, output_path):
     
     df_zoom = df[(df['Strike'] >= spot * 0.7) & (df['Strike'] <= spot * 1.3)]
     
+    # --- UI改善: レジーム判定と視覚的フィードバック ---
+    is_positive = spot > flip_point
+    regime_text = "🟢 POSITIVE GAMMA REGIME (押し目買い優位)" if is_positive else "🔴 NEGATIVE GAMMA REGIME (ブレイクアウト・順張り優位)"
+    regime_color = "#00FF00" if is_positive else "#FF4444"
+    
     fig = make_subplots(
         rows=2, cols=1, row_heights=[0.7, 0.3],
-        subplot_titles=("COMEX Silver Futures Dealer Net GEX Profile", "Implied Volatility Smile"),
-        shared_xaxes=True, vertical_spacing=0.05
+        subplot_titles=(f"COMEX Silver Futures Dealer Net GEX Profile<br><b style='color:{regime_color}; font-size:16px;'>{regime_text}</b>", "Implied Volatility Smile"),
+        shared_xaxes=True, vertical_spacing=0.07
     )
     
-    fig.add_trace(go.Bar(x=df_zoom["Strike"], y=df_zoom["Call_GEX"], name="Call GEX", marker_color="rgba(0, 255, 255, 0.6)"), row=1, col=1)
-    fig.add_trace(go.Bar(x=df_zoom["Strike"], y=df_zoom["Put_GEX"], name="Put GEX", marker_color="rgba(255, 0, 255, 0.6)"), row=1, col=1)
+    fig.add_trace(go.Bar(x=df_zoom["Strike"], y=df_zoom["Call_GEX"], name="Call GEX (レジスタンス)", marker_color="rgba(0, 255, 255, 0.7)"), row=1, col=1)
+    fig.add_trace(go.Bar(x=df_zoom["Strike"], y=df_zoom["Put_GEX"], name="Put GEX (サポート)", marker_color="rgba(255, 0, 255, 0.7)"), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_zoom["Strike"], y=df_zoom["Net_GEX"], name="Net GEX", mode="lines+markers", line=dict(color="white", width=2)), row=1, col=1)
     
-    fig.add_vline(x=spot, line=dict(color="yellow", width=2, dash="solid"), annotation_text=f"Spot (Futures): {spot:.2f}", annotation_position="top left", row=1, col=1)
+    # --- UI改善: 線が重なっても読めるようにラベルを分離＆背景色追加 ---
+    
+    # 1. Zero-Gamma (赤色・上部配置)
     if not np.isnan(flip_point):
-        fig.add_vline(x=flip_point, line=dict(color="red", width=2, dash="dashdot"), annotation_text=f"Zero-Gamma: {flip_point:.2f}", annotation_position="top right", row=1, col=1)
+        fig.add_vline(x=flip_point, line=dict(color="red", width=2, dash="dashdot"), 
+                      annotation_text=f"Zero-Gamma<br>{flip_point:.2f}", 
+                      annotation_position="top left", 
+                      annotation=dict(font=dict(color="white", size=13), bgcolor="rgba(255,0,0,0.6)", bordercolor="red", borderwidth=1),
+                      row=1, col=1)
+
+    # 2. Spot (黄色・下部配置)
+    fig.add_vline(x=spot, line=dict(color="yellow", width=2, dash="solid"), 
+                  annotation_text=f"Current Spot<br>{spot:.2f}", 
+                  annotation_position="bottom right", 
+                  annotation=dict(font=dict(color="black", size=13), bgcolor="rgba(255,255,0,0.8)", bordercolor="yellow", borderwidth=1),
+                  row=1, col=1)
         
     fig.add_trace(go.Scatter(x=df_zoom["Strike"], y=df_zoom["IV"]*100, name="IV", mode="lines+markers", line_color="orange"), row=2, col=1)
     
     fig.update_layout(
         title=f"Quant Options Radar: 銀先物 (SI) | Expiry: {expiry}",
-        template="plotly_dark", height=900, barmode='relative', hovermode='x unified'
+        template="plotly_dark", height=950, barmode='relative', hovermode='x unified',
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     fig.update_yaxes(title_text="GEX ($M)", row=1, col=1)
     fig.update_yaxes(title_text="IV (%)", row=2, col=1)
