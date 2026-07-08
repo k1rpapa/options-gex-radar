@@ -16,7 +16,8 @@ DOCS_DIR = ROOT_DIR / "docs"
 ASSET_CONFIG = {
     "SI": {"name": "銀先物 (SI)", "ticker": "SI=F", "multiplier": 5000, "filename": "index.html"},
     "NG": {"name": "天然ガス先物 (NG)", "ticker": "NG=F", "multiplier": 10000, "filename": "ng.html"},
-    "ZS": {"name": "大豆先物 (ZS)", "ticker": "ZS=F", "multiplier": 5000, "filename": "zs.html"}
+    "ZS": {"name": "大豆先物 (ZS)", "ticker": "ZS=F", "multiplier": 50, "filename": "zs.html"},
+    "HG": {"name": "銅先物 (HG)", "ticker": "HG=F", "multiplier": 25000, "filename": "hg.html"}
 }
 
 def parse_strike(val):
@@ -200,6 +201,7 @@ def export_dashboard(df, spot, expiry, output_path, config):
         <a href="index.html" style="color: #00FFFF;">🪙 Silver (SI)</a>
         <a href="ng.html" style="color: #FF00FF;">🔥 Natural Gas (NG)</a>
         <a href="zs.html" style="color: #32CD32;">🌱 Soybeans (ZS)</a>
+        <a href="hg.html" style="color: #FF8C00;">🥉 Copper (HG)</a>
         <a href="gex_trading_guide.html" style="color: #FFFF00;">📖 Trading Manual</a>
     </div>
     <div class="mobile-notice">📱 グラフを左右にスワイプして詳細を確認できます</div>
