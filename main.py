@@ -14,7 +14,7 @@ import google.generativeai as genai
 ROOT_DIR = Path(__file__).parent.resolve()
 DOCS_DIR = ROOT_DIR / "docs"
 
-# 複数アセット定義
+# 複数アセット定義（全6銘柄・マルチプライヤー修正済）
 ASSET_CONFIG = {
     "SI": {"name": "銀先物 (SI)", "ticker": "SI=F", "multiplier": 5000, "filename": "index.html"},
     "NG": {"name": "天然ガス先物 (NG)", "ticker": "NG=F", "multiplier": 10000, "filename": "ng.html"},
@@ -122,12 +122,11 @@ def extract_flip_point(df, spot):
     if x1 - x0 == 0: return y0
     return y0 - (x0 * (y1 - y0) / (x1 - x0))
 
-# --- AIインサイト生成機能（カスケード・フォールバック型へ堅牢化） ---
+# --- 強力なフォールバック機構を備えたAIインサイトジェネレーター ---
 def generate_ai_insight(config, spot, flip_point, df):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        print(f"[!] Warning: GEMINI_API_KEY is not set for {config['ticker']}.")
-        return "<p style='color: #ff4444;'>[Error] GEMINI_API_KEYが設定されていないため、AIインサイトの生成はスキップされました。</p>"
+        return "<p style='color: #ff4444;'>[Error] GEMINI_API_KEYが設定されていません。</p>"
     
     genai.configure(api_key=api_key)
     
@@ -155,41 +154,51 @@ def generate_ai_insight(config, spot, flip_point, df):
     2. Strike {put_walls[1]['Strike']} (GEX: {put_walls[1]['Put_GEX']:.2f}M)
 
     【出力フォーマット (厳守事項)】
-    - Webページに直接埋め込むため、**Markdown記法（```html など）は絶対に含めず、純粋なHTMLの断片のみ**を出力すること。
+    - Webページに直接埋め込むため、Markdown記法（```html など）は絶対に含めず、純粋なHTMLの断片のみを出力すること。
     - 以下のHTMLタグを駆使して構造化すること: <h3>, <ul>, <li>, <p>, <strong>
-    - ダークテーマのダッシュボードに映えるよう、重要な数値や方向性にはインラインCSSで色付けをすること。（例: <strong style="color:#00FF00;">ロング</strong>, <strong style="color:#FF4444;">ショート</strong>, <span style="color:#00FFFF;">{call_walls[0]['Strike']}の壁</span> など）
-    - 初心者向けの解説は不要。現在のレジームに基づく「どこでエントリーし、どこで利確・損切りすべきか」「オプションMM（マーケットメーカー）のヘッジ行動がどう影響するか」の具体的なアクションプランにフォーカスせよ。
+    - ダークテーマのダッシュボードに映えるよう、重要な数値や方向性にはインラインCSSで色付けをすること。
+    - 初心者向けの解説は不要。現在のレジームに基づく「どこでエントリーし、どこで利確・損切りすべきか」の具体的なアクションプランにフォーカスせよ。
     """
     
-    # アクセス権限エラーを回避するためのモデルフォールバック順
+    # 確実に存在するであろうモデル群を優先順にハードコード（動的探索の404エラーを回避）
     models_to_try = [
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
+        "gemini-1.5-flash", 
+        "gemini-1.0-pro",
         "gemini-pro"
     ]
     
-    last_error = ""
+    error_logs = []
+    
     for model_name in models_to_try:
         try:
             print(f"[*] {config['ticker']} - Trying AI Core: '{model_name}'")
             model = genai.GenerativeModel(model_name=model_name)
             response = model.generate_content(prompt)
             text = response.text
-            # 生成されたテキストから余分なMarkdownタグを削ぎ落とす
+            # 余分なマークダウンを徹底的に除去
             text = text.replace('```html', '').replace('```', '').strip()
             print(f"[+] Success with '{model_name}'")
             return text
         except Exception as e:
-            print(f"[!] {config['ticker']} - Model '{model_name}' Failed: {e}")
-            last_error = str(e)
+            err_msg = str(e)
+            print(f"[!] {config['ticker']} - Model '{model_name}' Failed: {err_msg}")
+            error_logs.append(f"{model_name}: {err_msg}")
             continue
             
-    return f"<p style='color: #ff4444;'>[エラー] 全てのAIモデルでのインサイト生成に失敗しました。<br>詳細: {last_error}</p>"
+    # 全モデルで失敗した場合の最終エラー出力（この書式が出れば、この最新コードが動いている証拠です）
+    combined_errors = "<br>".join(error_logs)
+    return f"""
+    <div style='color: #ff4444; font-family: monospace; font-size: 13px; background: #2a0000; padding: 10px; border-radius: 4px;'>
+        <strong>[致命的エラー] 全てのAIモデルでインサイト生成に失敗しました。</strong><br><br>
+        【詳細ログ】<br>{combined_errors}
+    </div>
+    """
 
 def export_dashboard(df, spot, expiry, data_date, output_path, config):
     flip_point = extract_flip_point(df, spot)
     
-    print(f"[{config['ticker']}] Generating AI Insight via Gemini API...")
+    # AIインサイトの取得
+    print(f"[{config['ticker']}] Generating AI Insight...")
     ai_insight_html = generate_ai_insight(config, spot, flip_point, df)
 
     df_zoom = df[(df['Strike'] >= spot * 0.7) & (df['Strike'] <= spot * 1.3)].copy()
@@ -295,9 +304,7 @@ def export_dashboard(df, spot, expiry, data_date, output_path, config):
             display: flex;
             align-items: center;
         }
-        .ai-panel-header span {
-            margin-right: 8px;
-        }
+        .ai-panel-header span { margin-right: 8px; }
         .ai-panel h3 { color: #fff; margin-top: 20px; font-size: 16px; border-bottom: 1px dotted #444; padding-bottom: 5px; }
         .ai-panel ul { padding-left: 20px; }
         .ai-panel li { margin-bottom: 8px; font-size: 14px; }
@@ -341,7 +348,6 @@ def export_dashboard(df, spot, expiry, data_date, output_path, config):
     
     html_content = html_content.replace('<head>', f'<head>\n{custom_head}')
     html_content = html_content.replace('<body>', nav_and_container)
-    # </body>タグの直前にAIパネルとスクリプトを挿入
     html_content = html_content.replace('</body>', f'{ai_panel_html}\n<script>\nwindow.addEventListener("load", function() {{\nvar container = document.querySelector(".chart-scroll-container");\nif (container) {{ container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2; }}\n}});\n</script>\n</body>')
     
     with open(output_path, 'w', encoding='utf-8') as f:
