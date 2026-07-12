@@ -94,9 +94,10 @@ def load_barchart_csv(prefix_pattern):
 
 def fetch_futures_spot(ticker):
     tkr = yf.Ticker(ticker)
-    hist = tkr.history(period="1d")
+    # 修正: 週末エラー回避のため過去5日分を取得し、最新の有効な終値を返す
+    hist = tkr.history(period="5d")
     if hist.empty: raise ValueError(f"取得失敗: {ticker}")
-    return hist['Close'].iloc[-1]
+    return hist['Close'].dropna().iloc[-1]
 
 def calculate_gex(df, spot, multiplier):
     df = df[(df['Call_OI'] > 0) | (df['Put_OI'] > 0)].copy()
@@ -122,7 +123,6 @@ def extract_flip_point(df, spot):
     if x1 - x0 == 0: return y0
     return y0 - (x0 * (y1 - y0) / (x1 - x0))
 
-# --- 強力なフォールバック機構を備えたAIインサイトジェネレーター ---
 def generate_ai_insight(config, spot, flip_point, df):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -160,11 +160,10 @@ def generate_ai_insight(config, spot, flip_point, df):
     - 初心者向けの解説は不要。現在のレジームに基づく「どこでエントリーし、どこで利確・損切りすべきか」の具体的なアクションプランにフォーカスせよ。
     """
     
-    # 確実に存在するであろうモデル群を優先順にハードコード（動的探索の404エラーを回避）
     models_to_try = [
-        "gemini-1.5-flash", 
+        "gemini-pro", 
         "gemini-1.0-pro",
-        "gemini-pro"
+        "gemini-1.5-flash"
     ]
     
     error_logs = []
@@ -175,7 +174,6 @@ def generate_ai_insight(config, spot, flip_point, df):
             model = genai.GenerativeModel(model_name=model_name)
             response = model.generate_content(prompt)
             text = response.text
-            # 余分なマークダウンを徹底的に除去
             text = text.replace('```html', '').replace('```', '').strip()
             print(f"[+] Success with '{model_name}'")
             return text
@@ -185,7 +183,6 @@ def generate_ai_insight(config, spot, flip_point, df):
             error_logs.append(f"{model_name}: {err_msg}")
             continue
             
-    # 全モデルで失敗した場合の最終エラー出力
     combined_errors = "<br>".join(error_logs)
     return f"""
     <div style='color: #ff4444; font-family: monospace; font-size: 13px; background: #2a0000; padding: 10px; border-radius: 4px;'>
@@ -197,7 +194,6 @@ def generate_ai_insight(config, spot, flip_point, df):
 def export_dashboard(df, spot, expiry, data_date, output_path, config):
     flip_point = extract_flip_point(df, spot)
     
-    # AIインサイトの取得
     print(f"[{config['ticker']}] Generating AI Insight...")
     ai_insight_html = generate_ai_insight(config, spot, flip_point, df)
 
@@ -317,7 +313,6 @@ def export_dashboard(df, spot, expiry, data_date, output_path, config):
     </style>
     """
     
-    # --- グラフの下にAIインサイトパネルを注入 ---
     ai_panel_html = f"""
         </div>
     </div> <!-- chart-scroll-container end -->
