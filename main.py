@@ -14,7 +14,7 @@ import google.generativeai as genai
 ROOT_DIR = Path(__file__).parent.resolve()
 DOCS_DIR = ROOT_DIR / "docs"
 
-# 複数アセット定義（全6銘柄・マルチプライヤー修正済）
+# 複数アセット定義
 ASSET_CONFIG = {
     "SI": {"name": "銀先物 (SI)", "ticker": "SI=F", "multiplier": 5000, "filename": "index.html"},
     "NG": {"name": "天然ガス先物 (NG)", "ticker": "NG=F", "multiplier": 10000, "filename": "ng.html"},
@@ -97,7 +97,7 @@ def fetch_futures_spot(ticker):
     # 修正: 週末エラー回避のため過去5日分を取得し、最新の有効な終値を返す
     hist = tkr.history(period="5d")
     if hist.empty: raise ValueError(f"取得失敗: {ticker}")
-    return hist['Close'].dropna().iloc[-1]
+    return float(hist['Close'].dropna().iloc[-1])
 
 def calculate_gex(df, spot, multiplier):
     df = df[(df['Call_OI'] > 0) | (df['Put_OI'] > 0)].copy()
@@ -160,36 +160,35 @@ def generate_ai_insight(config, spot, flip_point, df):
     - 初心者向けの解説は不要。現在のレジームに基づく「どこでエントリーし、どこで利確・損切りすべきか」の具体的なアクションプランにフォーカスせよ。
     """
     
-    models_to_try = [
-        "gemini-1.5-flash", 
-        "gemini-1.0-pro",
-        "gemini-pro"
-    ]
-    
-    error_logs = []
-    
-    for model_name in models_to_try:
-        try:
-            print(f"[*] {config['ticker']} - Trying AI Core: '{model_name}'")
-            model = genai.GenerativeModel(model_name=model_name)
-            response = model.generate_content(prompt)
-            text = response.text
-            text = text.replace('```html', '').replace('```', '').strip()
-            print(f"[+] Success with '{model_name}'")
-            return text
-        except Exception as e:
-            err_msg = str(e)
-            print(f"[!] {config['ticker']} - Model '{model_name}' Failed: {err_msg}")
-            error_logs.append(f"{model_name}: {err_msg}")
-            continue
-            
-    combined_errors = "<br>".join(error_logs)
-    return f"""
-    <div style='color: #ff4444; font-family: monospace; font-size: 13px; background: #2a0000; padding: 10px; border-radius: 4px;'>
-        <strong>[致命的エラー] 全てのAIモデルでインサイト生成に失敗しました。</strong><br><br>
-        【詳細ログ】<br>{combined_errors}
-    </div>
-    """
+    try:
+        # Canary Radar由来の強固な動的モデル探索ロジック
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        preferred_order = [
+            "models/gemini-1.5-pro-latest", "models/gemini-1.5-pro",
+            "models/gemini-1.5-flash-latest", "models/gemini-1.5-flash", "models/gemini-pro"
+        ]
+        target_model = None
+        for pref in preferred_order:
+            if pref in available_models:
+                target_model = pref.replace("models/", "")
+                break
+        if not target_model:
+            target_model = available_models[0].replace("models/", "") if available_models else "gemini-1.5-flash"
+
+        print(f"[*] {config['ticker']} - Dynamic Model Discovery: AI Core '{target_model}' Engaged.")
+        model = genai.GenerativeModel(model_name=target_model)
+        response = model.generate_content(prompt)
+        text = response.text
+        text = text.replace('```html', '').replace('```', '').strip()
+        return text
+    except Exception as e:
+        print(f"[!] Critical AI Core Error: {e}")
+        return f"""
+        <div style='color: #ff4444; font-family: monospace; font-size: 13px; background: #2a0000; padding: 10px; border-radius: 4px;'>
+            <strong>[致命的エラー] AIインサイト生成に失敗しました。</strong><br><br>
+            【詳細ログ】<br>{e}
+        </div>
+        """
 
 def export_dashboard(df, spot, expiry, data_date, output_path, config):
     flip_point = extract_flip_point(df, spot)
