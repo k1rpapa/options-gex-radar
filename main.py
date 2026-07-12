@@ -185,7 +185,7 @@ def generate_ai_insight(config, spot, flip_point, df):
             error_logs.append(f"{model_name}: {err_msg}")
             continue
             
-    # 全モデルで失敗した場合の最終エラー出力（この書式が出れば、この最新コードが動いている証拠です）
+    # 全モデルで失敗した場合の最終エラー出力
     combined_errors = "<br>".join(error_logs)
     return f"""
     <div style='color: #ff4444; font-family: monospace; font-size: 13px; background: #2a0000; padding: 10px; border-radius: 4px;'>
