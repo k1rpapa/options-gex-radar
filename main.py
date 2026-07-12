@@ -161,9 +161,9 @@ def generate_ai_insight(config, spot, flip_point, df):
     """
     
     models_to_try = [
-        "gemini-pro", 
+        "gemini-1.5-flash", 
         "gemini-1.0-pro",
-        "gemini-1.5-flash"
+        "gemini-pro"
     ]
     
     error_logs = []
