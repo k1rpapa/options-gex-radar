@@ -8,6 +8,7 @@ from scipy.stats import norm
 import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import google.generativeai as genai  # ← 【追加】
 
 # パス定義
 ROOT_DIR = Path(__file__).parent.resolve()
@@ -122,8 +123,62 @@ def extract_flip_point(df, spot):
     if x1 - x0 == 0: return y0
     return y0 - (x0 * (y1 - y0) / (x1 - x0))
 
+# --- 【新規追加】Gemini APIによる自動分析生成関数 ---
+def generate_ai_insight(config, spot, flip_point, df):
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return "<p style='color: #ff4444;'>[System] GEMINI_API_KEYが設定されていないため、AIインサイトの生成はスキップされました。</p>"
+    
+    genai.configure(api_key=api_key)
+    # 応答速度とコストのバランスから gemini-1.5-flash または pro を使用
+    model = genai.GenerativeModel('gemini-1.5-pro')
+    
+    # 上下3つの最大の壁を抽出
+    call_walls = df[df['Call_GEX'] > 0].nlargest(3, 'Call_GEX')[['Strike', 'Call_GEX']].to_dict('records')
+    put_walls = df[df['Put_GEX'] < 0].nsmallest(3, 'Put_GEX')[['Strike', 'Put_GEX']].to_dict('records')
+    
+    regime = "POSITIVE (押し目買い・レンジ優位)" if spot > flip_point else "NEGATIVE (ブレイクアウト・順張り優位)"
+    
+    prompt = f"""
+    あなたは金融工学とオプション取引に精通した「リード・クオンツアナリスト」です。
+    以下の最新のGEX（ガンマ・エクスポージャー）データに基づき、プロのCFDトレーダー向けの簡潔な相場分析と実践的なトレード戦略を出力してください。
+    
+    【対象銘柄】: {config['name']}
+    【現在価格 (Spot)】: {spot:.3f}
+    【Zero-Gamma境界線】: {flip_point:.3f}
+    【現在のレジーム】: {regime}
+    
+    【主要なレジスタンス (Call Wall)】
+    1. Strike {call_walls[0]['Strike']} (GEX: {call_walls[0]['Call_GEX']:.2f}M)
+    2. Strike {call_walls[1]['Strike']} (GEX: {call_walls[1]['Call_GEX']:.2f}M)
+    
+    【主要なサポート (Put Wall)】
+    1. Strike {put_walls[0]['Strike']} (GEX: {put_walls[0]['Put_GEX']:.2f}M)
+    2. Strike {put_walls[1]['Strike']} (GEX: {put_walls[1]['Put_GEX']:.2f}M)
+
+    【出力要件】
+    - 出力は必ずそのままWebに埋め込める **HTMLの断片のみ** とすること。（Markdownのコードブロック ```html などは絶対に含めないでください）
+    - 以下のHTMLタグを駆使して、視覚的に見やすく構造化すること: <h3>, <ul>, <li>, <strong>, <br>
+    - デザインテーマ（ダークモード、ハッカーライク）に合うよう、重要な数値や方向性にはインラインCSSで色付けをすること。（例: <strong style="color:#00FF00;">ロング</strong>, <strong style="color:#FF4444;">ショート</strong>, <span style="color:#00FFFF;">1200の壁</span> など）
+    - 初心者向けの解説は不要。現在のレジームに基づく「どこでエントリーし、どこで利確・損切りすべきか」の具体的なアクションプランにフォーカスすること。
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        text = response.text
+        # Markdownのコードブロックタグが混入した場合の除去処理
+        text = text.replace('```html', '').replace('```', '').strip()
+        return text
+    except Exception as e:
+        return f"<p style='color: #ff4444;'>[Error] AIインサイト生成に失敗しました: {e}</p>"
+
 def export_dashboard(df, spot, expiry, data_date, output_path, config):
     flip_point = extract_flip_point(df, spot)
+    
+    # --- AIインサイトの生成 ---
+    print(f"[{config['ticker']}] Generating AI Insight via Gemini API...")
+    ai_insight_html = generate_ai_insight(config, spot, flip_point, df)
+
     df_zoom = df[(df['Strike'] >= spot * 0.7) & (df['Strike'] <= spot * 1.3)].copy()
     
     iv_series = df_zoom["IV"].replace(0, np.nan)
@@ -175,6 +230,7 @@ def export_dashboard(df, spot, expiry, data_date, output_path, config):
     with open(output_path, 'r', encoding='utf-8') as f:
         html_content = f.read()
     
+    # --- AIパネル用のCSSを追加 ---
     custom_head = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
@@ -198,11 +254,61 @@ def export_dashboard(df, spot, expiry, data_date, output_path, config):
             min-width: 1100px;
             margin: 0 auto;
         }
+        /* --- AIパネルのデザイン --- */
+        .ai-panel-container {
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto 40px auto;
+            padding: 0 15px;
+            box-sizing: border-box;
+        }
+        .ai-panel {
+            background-color: #1a1a1a;
+            border-left: 4px solid #f9ab00;
+            border-top: 1px solid #333;
+            border-right: 1px solid #333;
+            border-bottom: 1px solid #333;
+            border-radius: 4px;
+            padding: 20px;
+            color: #dcdcdc;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+        }
+        .ai-panel-header {
+            color: #f9ab00;
+            font-size: 14px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }
+        .ai-panel-header span {
+            margin-right: 8px;
+        }
+        .ai-panel h3 { color: #fff; margin-top: 20px; font-size: 16px; border-bottom: 1px dotted #444; padding-bottom: 5px; }
+        .ai-panel ul { padding-left: 20px; }
+        .ai-panel li { margin-bottom: 8px; font-size: 14px; }
+        
         @media screen and (max-width: 800px) {
             .mobile-notice { display: block; }
             .nav-bar a { font-size: 12px; margin: 0 3px; }
+            .ai-panel { padding: 15px; }
         }
     </style>
+    """
+    
+    # --- グラフの下にAIインサイトパネルを注入 ---
+    ai_panel_html = f"""
+        </div>
+    </div> <!-- chart-scroll-container end -->
+    
+    <div class="ai-panel-container">
+        <div class="ai-panel">
+            <div class="ai-panel-header"><span>●</span> DAILY QUANT INSIGHT (Powered by Gemini AI)</div>
+            {ai_insight_html}
+        </div>
+    </div>
     """
     
     nav_and_container = """
@@ -221,23 +327,10 @@ def export_dashboard(df, spot, expiry, data_date, output_path, config):
         <div class="chart-wrapper">
     """
     
-    scroll_script = """
-        </div>
-    </div>
-    <script>
-        window.addEventListener('load', function() {
-            var container = document.querySelector('.chart-scroll-container');
-            if (container) {
-                container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2;
-            }
-        });
-    </script>
-    </body>
-    """
-    
     html_content = html_content.replace('<head>', f'<head>\n{custom_head}')
     html_content = html_content.replace('<body>', nav_and_container)
-    html_content = html_content.replace('</body>', scroll_script)
+    # </body>タグの直前にAIパネルとスクリプトを挿入
+    html_content = html_content.replace('</body>', f'{ai_panel_html}\n<script>\nwindow.addEventListener("load", function() {{\nvar container = document.querySelector(".chart-scroll-container");\nif (container) {{ container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2; }}\n}});\n</script>\n</body>')
     
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
