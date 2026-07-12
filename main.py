@@ -8,7 +8,7 @@ from scipy.stats import norm
 import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import google.generativeai as genai
+import google.generativeai as genai  # ← 【追加】
 
 # パス定義
 ROOT_DIR = Path(__file__).parent.resolve()
@@ -86,6 +86,7 @@ def load_barchart_csv(prefix_pattern):
     if "exp-" in basename:
         expiry_info = basename.split("exp-")[1].split("-")[0]
         
+    # ファイル名末尾の日付 (例: 07-08-2026) を抽出
     date_match = re.search(r'(\d{2}-\d{2}-\d{4})\.csv$', basename)
     if date_match:
         data_date = date_match.group(1)
@@ -122,44 +123,25 @@ def extract_flip_point(df, spot):
     if x1 - x0 == 0: return y0
     return y0 - (x0 * (y1 - y0) / (x1 - x0))
 
-# --- AIインサイト生成機能（CANARY RADARのDynamic Model Discoveryを採用） ---
+# --- 【新規追加】Gemini APIによる自動分析生成関数 ---
 def generate_ai_insight(config, spot, flip_point, df):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        print(f"[!] Warning: GEMINI_API_KEY is not set for {config['ticker']}.")
-        return "<p style='color: #ff4444;'>[Error] GEMINI_API_KEYが設定されていないため、AIインサイトの生成はスキップされました。</p>"
+        return "<p style='color: #ff4444;'>[System] GEMINI_API_KEYが設定されていないため、AIインサイトの生成はスキップされました。</p>"
     
     genai.configure(api_key=api_key)
+    # 応答速度とコストのバランスから gemini-1.5-flash または pro を使用
+    model = genai.GenerativeModel('gemini-1.5-pro')
     
-    try:
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        preferred_order = [
-            "models/gemini-1.5-pro-latest", "models/gemini-1.5-pro",
-            "models/gemini-1.5-flash-latest", "models/gemini-1.5-flash", "models/gemini-pro"
-        ]
-        target_model = None
-        for pref in preferred_order:
-            if pref in available_models:
-                target_model = pref.replace("models/", "")
-                break
-        if not target_model:
-            target_model = available_models[0].replace("models/", "") if available_models else "gemini-pro"
-
-        print(f"[*] {config['ticker']} - Dynamic Model Discovery: AI Core '{target_model}' Engaged.")
-        model = genai.GenerativeModel(model_name=target_model)
-    except Exception as e:
-        print(f"[!] {config['ticker']} - Model Discovery Error: {e}")
-        model = genai.GenerativeModel('gemini-pro')
-
+    # 上下3つの最大の壁を抽出
     call_walls = df[df['Call_GEX'] > 0].nlargest(3, 'Call_GEX')[['Strike', 'Call_GEX']].to_dict('records')
     put_walls = df[df['Put_GEX'] < 0].nsmallest(3, 'Put_GEX')[['Strike', 'Put_GEX']].to_dict('records')
     
-    is_positive = spot > flip_point
-    regime = "POSITIVE (押し目買い・レンジ優位)" if is_positive else "NEGATIVE (ブレイクアウト・順張り優位)"
+    regime = "POSITIVE (押し目買い・レンジ優位)" if spot > flip_point else "NEGATIVE (ブレイクアウト・順張り優位)"
     
     prompt = f"""
     あなたは金融工学とオプション取引に精通した「リード・クオンツアナリスト」です。
-    以下の最新のGEX（ガンマ・エクスポージャー）データに基づき、プロのCFDトレーダー向けに現在の重力場の分析と、実践的なトレード戦略を出力してください。
+    以下の最新のGEX（ガンマ・エクスポージャー）データに基づき、プロのCFDトレーダー向けの簡潔な相場分析と実践的なトレード戦略を出力してください。
     
     【対象銘柄】: {config['name']}
     【現在価格 (Spot)】: {spot:.3f}
@@ -174,25 +156,26 @@ def generate_ai_insight(config, spot, flip_point, df):
     1. Strike {put_walls[0]['Strike']} (GEX: {put_walls[0]['Put_GEX']:.2f}M)
     2. Strike {put_walls[1]['Strike']} (GEX: {put_walls[1]['Put_GEX']:.2f}M)
 
-    【出力フォーマット (厳守事項)】
-    - Webページに直接埋め込むため、**Markdown記法（```html など）は絶対に含めず、純粋なHTMLの断片のみ**を出力すること。
-    - 以下のHTMLタグを駆使して構造化すること: <h3>, <ul>, <li>, <p>, <strong>
-    - ダークテーマのダッシュボードに映えるよう、重要な数値や方向性にはインラインCSSで色付けをすること。（例: <strong style="color:#00FF00;">ロング</strong>, <strong style="color:#FF4444;">ショート</strong>, <span style="color:#00FFFF;">{call_walls[0]['Strike']}の壁</span> など）
-    - 初心者向けの解説は不要。現在のレジームに基づく「どこでエントリーし、どこで利確・損切りすべきか」「オプションMM（マーケットメーカー）のヘッジ行動がどう影響するか」の具体的なアクションプランにフォーカスせよ。
+    【出力要件】
+    - 出力は必ずそのままWebに埋め込める **HTMLの断片のみ** とすること。（Markdownのコードブロック ```html などは絶対に含めないでください）
+    - 以下のHTMLタグを駆使して、視覚的に見やすく構造化すること: <h3>, <ul>, <li>, <strong>, <br>
+    - デザインテーマ（ダークモード、ハッカーライク）に合うよう、重要な数値や方向性にはインラインCSSで色付けをすること。（例: <strong style="color:#00FF00;">ロング</strong>, <strong style="color:#FF4444;">ショート</strong>, <span style="color:#00FFFF;">1200の壁</span> など）
+    - 初心者向けの解説は不要。現在のレジームに基づく「どこでエントリーし、どこで利確・損切りすべきか」の具体的なアクションプランにフォーカスすること。
     """
     
     try:
         response = model.generate_content(prompt)
         text = response.text
+        # Markdownのコードブロックタグが混入した場合の除去処理
         text = text.replace('```html', '').replace('```', '').strip()
         return text
     except Exception as e:
-        print(f"[!] {config['ticker']} - Content Generation Error: {e}")
-        return f"<p style='color: #ff4444;'>[エラー] AIインサイト生成に失敗しました: {e}</p>"
+        return f"<p style='color: #ff4444;'>[Error] AIインサイト生成に失敗しました: {e}</p>"
 
 def export_dashboard(df, spot, expiry, data_date, output_path, config):
     flip_point = extract_flip_point(df, spot)
     
+    # --- AIインサイトの生成 ---
     print(f"[{config['ticker']}] Generating AI Insight via Gemini API...")
     ai_insight_html = generate_ai_insight(config, spot, flip_point, df)
 
@@ -247,6 +230,7 @@ def export_dashboard(df, spot, expiry, data_date, output_path, config):
     with open(output_path, 'r', encoding='utf-8') as f:
         html_content = f.read()
     
+    # --- AIパネル用のCSSを追加 ---
     custom_head = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
