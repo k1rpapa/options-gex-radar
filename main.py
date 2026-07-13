@@ -1,5 +1,7 @@
 import os
 import glob
+import time
+import traceback
 import pandas as pd
 import numpy as np
 import re
@@ -9,41 +11,60 @@ import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import google.generativeai as genai
-import json
 
 # パス定義
 ROOT_DIR = Path(__file__).parent.resolve()
 DOCS_DIR = ROOT_DIR / "docs"
 
-# 複数アセット定義（S&P 500 E-Mini 追加済）
+# 複数アセット定義（全7銘柄・マルチプライヤー修正済）
 ASSET_CONFIG = {
-    "ES": {"name": "S&P 500 E-Mini (ES)", "ticker": "ES=F", "multiplier": 50, "filename": "es.html"},
-    "SI": {"name": "銀先物 (SI)", "ticker": "SI=F", "multiplier": 5000, "filename": "index.html"},
-    "NG": {"name": "天然ガス先物 (NG)", "ticker": "NG=F", "multiplier": 10000, "filename": "ng.html"},
-    "HG": {"name": "銅先物 (HG)", "ticker": "HG=F", "multiplier": 25000, "filename": "hg.html"},
-    "ZS": {"name": "大豆先物 (ZS)", "ticker": "ZS=F", "multiplier": 50, "filename": "zs.html"},
-    "ZC": {"name": "コーン先物 (ZC)", "ticker": "ZC=F", "multiplier": 50, "filename": "zc.html"},
-    "ZW": {"name": "小麦先物 (ZW)", "ticker": "ZW=F", "multiplier": 50, "filename": "zw.html"}
+    "ES": {"name": "S&P 500 (ES)", "ticker": "ES=F", "multiplier": 50, "filename": "es.html"},
+    "SI": {"name": "シルバー (SI)", "ticker": "SI=F", "multiplier": 5000, "filename": "index.html"},
+    "NG": {"name": "天然ガス (NG)", "ticker": "NG=F", "multiplier": 10000, "filename": "ng.html"},
+    "HG": {"name": "銅 (HG)", "ticker": "HG=F", "multiplier": 25000, "filename": "hg.html"},
+    "ZS": {"name": "大豆 (ZS)", "ticker": "ZS=F", "multiplier": 50, "filename": "zs.html"},
+    "ZC": {"name": "トウモロコシ (ZC)", "ticker": "ZC=F", "multiplier": 50, "filename": "zc.html"},
+    "ZW": {"name": "小麦 (ZW)", "ticker": "ZW=F", "multiplier": 50, "filename": "zw.html"}
 }
 
+def clean_val(val):
+    if pd.isna(val) or val == 'N/A':
+        return 0.0
+    val_str = str(val).replace(',', '').replace('%', '').replace('s', '').strip()
+    try:
+        return float(val_str)
+    except:
+        return 0.0
+
 def parse_strike(val):
-    s = str(val).split('-')[0].replace('%', '').replace(',', '').replace('s', '').replace('N/A', '0').replace('nan', '0').strip()
-    try: return float(s)
-    except: return 0.0
+    s = str(val).split('-')[0].replace(',', '').replace('s', '').strip()
+    try:
+        return float(s)
+    except:
+        return 0.0
 
 def load_barchart_csv(prefix_pattern):
     sb_files = sorted(glob.glob(f"{prefix_pattern}side-by-side*.csv"))
     gk_files = sorted(glob.glob(f"{prefix_pattern}volatility-greeks*.csv"))
     if not sb_files or not gk_files:
         return None, None, None
+        
     sb_path = sb_files[-1]
     gk_path = gk_files[-1]
     
-    # ファイル名から日付を抽出 (例: ...-07-12-2026.csv)
-    date_match = re.search(r'(\d{2}-\d{2}-\d{4})', sb_path)
-    data_date = date_match.group(1) if date_match else "Unknown Date"
+    # ファイル名から日付を抽出 (例: ...-07-11-2026.csv)
+    date_match = re.search(r'-(\d{2}-\d{2}-\d{4})\.csv$', sb_path)
+    file_date = date_match.group(1) if date_match else "Unknown"
     
-    return sb_path, gk_path, data_date
+    df_sb = pd.read_csv(sb_path)
+    df_gk = pd.read_csv(gk_path)
+    df_sb.columns = [str(c).strip() for c in df_sb.columns]
+    df_gk.columns = [str(c).strip() for c in df_gk.columns]
+    
+    df_sb['Strike'] = df_sb['Strike'].apply(parse_strike)
+    df_gk['Strike'] = df_gk['Strike'].apply(parse_strike)
+    
+    return df_sb, df_gk, file_date
 
 def generate_ai_insight(asset_name, spot_price, zero_gamma, call_wall, put_wall, regime):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -68,243 +89,273 @@ def generate_ai_insight(asset_name, spot_price, zero_gamma, call_wall, put_wall,
     現在の重力場から読み取れる「具体的なエントリー/エグジット/撤退の目安」だけを、プロフェッショナルなトーンで出力せよ。
     """
     
+    target_model = None
     try:
-        # 動的モデル探索とフォールバックの強靭化
+        # Canary Radar v12.3 実績のモデル探索ロジック
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         preferred_order = [
-            "models/gemini-1.5-flash-latest", "models/gemini-1.5-flash", 
-            "models/gemini-1.5-pro-latest", "models/gemini-1.5-pro", 
-            "models/gemini-pro", "models/gemini-1.0-pro"
+            "models/gemini-1.5-flash", "models/gemini-1.5-flash-latest", 
+            "models/gemini-1.5-pro", "models/gemini-1.5-pro-latest", 
+            "models/gemini-pro"
         ]
         
-        last_error = None
-        for target_model in preferred_order:
-            if target_model in available_models:
-                try:
-                    model = genai.GenerativeModel(model_name=target_model.replace("models/", ""))
-                    response = model.generate_content(prompt)
-                    return response.text
-                except Exception as e:
-                    last_error = e
-                    print(f"[!] Warning: Model {target_model} failed: {e}. Trying next...")
-                    continue
+        for pref in preferred_order:
+            if pref in available_models:
+                target_model = pref.replace("models/", "")
+                break
+                
+        if not target_model and available_models:
+            target_model = available_models[0].replace("models/", "")
+            
+        if not target_model:
+            return "<p style='color: #ff4444;'>[エラー] 利用可能なGeminiモデルが見つかりません。</p>"
+
+        model = genai.GenerativeModel(model_name=target_model)
         
-        raise Exception(f"全てのAIモデルでインサイト生成に失敗しました。詳細: {last_error}")
+        # 7銘柄連続アクセスによる 429 Too Many Requests (レートリミット) 回避
+        time.sleep(3)
+        
+        response = model.generate_content(prompt)
+        return response.text
+        
     except Exception as e:
-        return f"<p style='color: #ff4444;'>[エラー] {e}</p>"
+        trace = traceback.format_exc()
+        return f"<p style='color: #ff4444;'>[エラー] AIインサイト生成に失敗しました (Model: {target_model})<br>詳細: {e}</p><!--\n{trace}\n-->"
 
 def process_asset(asset_key, config):
     print(f"[*] Processing {config['name']}...")
-    prefix_pattern = ""
-    # CSVファイルのプレフィックスマッチング
-    if asset_key == "SI": prefix_pattern = "*si*"
-    elif asset_key == "NG": prefix_pattern = "*ng*"
-    elif asset_key == "HG": prefix_pattern = "*hg*"
-    elif asset_key == "ZS": prefix_pattern = "*zs*"
-    elif asset_key == "ZC": prefix_pattern = "*zc*"
-    elif asset_key == "ZW": prefix_pattern = "*zw*"
-    elif asset_key == "ES": prefix_pattern = "*es*"
+    prefix_pattern = f"{asset_key.lower()}*-options-exp-*" if asset_key != "ES" else "esu*-options-monthly-options-exp-*"
+    df_sb, df_gk, file_date = load_barchart_csv(prefix_pattern)
     
-    sb_path, gk_path, data_date = load_barchart_csv(prefix_pattern)
-    if not sb_path or not gk_path:
-        print(f"[!] No CSV files found for {asset_key}. Skipping.")
-        return
+    if df_sb is None or df_gk is None:
+        print(f"[!] Data not found for {asset_key}. Skipping.")
+        return None
         
-    df_sb = pd.read_csv(sb_path)
-    df_gk = pd.read_csv(gk_path)
-    df_sb.columns = [str(c).strip() for c in df_sb.columns]
-    df_gk.columns = [str(c).strip() for c in df_gk.columns]
+    df = pd.merge(df_sb, df_gk, on='Strike', how='inner')
     
-    df_sb['Strike'] = df_sb['Strike'].apply(parse_strike)
-    df_gk['Strike'] = df_gk['Strike'].apply(parse_strike)
-    
-    # 左右に分かれたカラムからCall/Putを動的に特定
-    call_oi_col = next((c for c in df_sb.columns if 'Open Int' in c and df_sb.columns.get_loc(c) < list(df_sb.columns).index('Strike')), None)
-    put_oi_col = next((c for c in df_sb.columns if 'Open Int' in c and df_sb.columns.get_loc(c) > list(df_sb.columns).index('Strike')), None)
-    call_iv_col = next((c for c in df_gk.columns if 'IV' in c and df_gk.columns.get_loc(c) < list(df_gk.columns).index('Strike')), None)
-    put_iv_col = next((c for c in df_gk.columns if 'IV' in c and df_gk.columns.get_loc(c) > list(df_gk.columns).index('Strike')), None)
-    call_gamma_col = next((c for c in df_gk.columns if 'Gamma' in c and df_gk.columns.get_loc(c) < list(df_gk.columns).index('Strike')), None)
-    put_gamma_col = next((c for c in df_gk.columns if 'Gamma' in c and df_gk.columns.get_loc(c) > list(df_gk.columns).index('Strike')), None)
-    
-    if not all([call_oi_col, put_oi_col, call_iv_col, put_iv_col, call_gamma_col, put_gamma_col]):
-        print(f"[!] Missing required columns for {asset_key}.")
-        return
-
-    df = pd.merge(df_sb[['Strike', call_oi_col, put_oi_col]], 
-                  df_gk[['Strike', call_iv_col, put_iv_col, call_gamma_col, put_gamma_col]], 
-                  on='Strike', how='inner')
-    
-    def clean_val(x):
-        s = str(x).split('-')[0].replace('%', '').replace(',', '').replace('s', '').replace('N/A', '0').replace('nan', '0').strip()
-        try: return float(s)
-        except: return 0.0
-
-    df['Call_OI'] = df[call_oi_col].apply(clean_val)
-    df['Put_OI'] = df[put_oi_col].apply(clean_val)
-    df['Call_IV'] = df[call_iv_col].apply(clean_val)
-    df['Put_IV'] = df[put_iv_col].apply(clean_val)
-    df['Call_Gamma'] = df[call_gamma_col].apply(clean_val)
-    df['Put_Gamma'] = df[put_gamma_col].apply(clean_val)
-    
-    # 週末データ欠落対策: period="5d" で取得し最後の有効値を使う
+    # 週末データ欠落対策：過去5日分のデータから最新の終値を取得
     try:
-        spot_history = yf.Ticker(config['ticker']).history(period="5d")
-        if spot_history.empty:
-            raise ValueError(f"No price data found for {config['ticker']}")
-        spot_price = float(spot_history['Close'].iloc[-1])
+        ticker = yf.Ticker(config['ticker'])
+        hist = ticker.history(period="5d")
+        if hist.empty:
+            raise ValueError("No price data found in 5d history")
+        spot_price = float(hist['Close'].iloc[-1])
     except Exception as e:
-        print(f"[!] Error fetching spot price for {asset_key}: {e}")
-        return
-        
-    multiplier = config['multiplier']
-    
-    df['Call_GEX'] = df['Call_OI'] * df['Call_Gamma'] * 100 * multiplier * spot_price
-    df['Put_GEX'] = df['Put_OI'] * df['Put_Gamma'] * 100 * multiplier * spot_price * -1
-    df['Net_GEX'] = df['Call_GEX'] + df['Put_GEX']
-    
-    df['IV_Avg'] = (df['Call_IV'] + df['Put_IV']) / 2
-    
-    # GEXは桁が大きすぎるためミリオン($M)単位に変換
-    df['Call_GEX'] /= 1_000_000
-    df['Put_GEX'] /= 1_000_000
-    df['Net_GEX'] /= 1_000_000
-    
-    # 描画用の範囲をスポット価格の周辺に限定
-    strike_range = spot_price * 0.2
-    df_plot = df[(df['Strike'] >= spot_price - strike_range) & (df['Strike'] <= spot_price + strike_range)].copy()
-    
-    if df_plot.empty:
-        print(f"[!] No valid data in strike range for {asset_key}.")
-        return
+        print(f"[!] Warning: yfinance failed to fetch {config['ticker']}. Using approx from Strikes. Error: {e}")
+        spot_price = df['Strike'].median()
 
-    # Key Levels
-    call_wall = df_plot.loc[df_plot['Call_GEX'].idxmax()]['Strike']
-    put_wall = df_plot.loc[df_plot['Put_GEX'].idxmin()]['Strike']
+    df['Call_OpenInt'] = df['Open Int_x'].apply(clean_val)
+    df['Put_OpenInt'] = df['Open Int_y'].apply(clean_val)
+    df['Call_Gamma'] = df['Gamma_x'].apply(clean_val)
+    df['Put_Gamma'] = df['Gamma_y'].apply(clean_val)
+    df['Call_IV'] = df['IV_x'].apply(clean_val)
+    df['Put_IV'] = df['IV_y'].apply(clean_val)
     
-    # 累積ガンマからZero Gammaを算出
-    df_plot_sorted = df_plot.sort_values('Strike')
-    cumulative_gex = np.cumsum(df_plot_sorted['Net_GEX'].values[::-1])[::-1] # 上から下へ累積
-    zero_gamma_idx = np.argmin(np.abs(cumulative_gex))
-    zero_gamma = df_plot_sorted['Strike'].iloc[zero_gamma_idx]
+    df['Call_GEX'] = df['Call_Gamma'] * df['Call_OpenInt'] * 100 * spot_price * spot_price * 0.01 * config['multiplier']
+    df['Put_GEX'] = df['Put_Gamma'] * df['Put_OpenInt'] * 100 * spot_price * spot_price * 0.01 * config['multiplier'] * -1
     
-    regime = "🟢 POSITIVE GAMMA REGIME (押し目買い優位)" if spot_price > zero_gamma else "🔴 NEGATIVE GAMMA REGIME (パニック売り警戒)"
+    df['Total_GEX'] = df['Call_GEX'] + df['Put_GEX']
+    df['Call_GEX_M'] = df['Call_GEX'] / 1e6
+    df['Put_GEX_M'] = df['Put_GEX'] / 1e6
+    df['Total_GEX_M'] = df['Total_GEX'] / 1e6
+    df['Avg_IV'] = (df['Call_IV'] + df['Put_IV']) / 2
     
-    # AI Insight の生成
-    ai_insight_html = generate_ai_insight(config['name'], spot_price, zero_gamma, call_wall, put_wall, regime)
-    
+    # 有効なStrike範囲に絞り込み
+    mask = (df['Call_GEX'] > 0) | (df['Put_GEX'] < 0)
+    if not mask.any():
+        return None
+    valid_strikes = df.loc[mask, 'Strike']
+    min_strike = valid_strikes.min()
+    max_strike = valid_strikes.max()
+    margin = (max_strike - min_strike) * 0.1
+    df_filtered = df[(df['Strike'] >= min_strike - margin) & (df['Strike'] <= max_strike + margin)].copy()
+
+    # Zero-Gamma, Call/Put Wall
+    zero_gamma_idx = df_filtered['Total_GEX'].abs().idxmin()
+    zero_gamma_strike = df_filtered.loc[zero_gamma_idx, 'Strike']
+    call_wall_strike = df_filtered.loc[df_filtered['Call_GEX'].idxmax(), 'Strike']
+    put_wall_strike = df_filtered.loc[df_filtered['Put_GEX'].idxmin(), 'Strike']
+
+    if spot_price > zero_gamma_strike:
+        regime = "🟢 POSITIVE GAMMA REGIME (押し目買い優位)"
+        regime_color = "#00FF00"
+    else:
+        regime = "🔴 NEGATIVE GAMMA REGIME (パニック売り警戒)"
+        regime_color = "#FF3333"
+
+    # AIインサイト生成
+    print(f"[*] Generating AI Insight for {config['name']}...")
+    ai_insight_html = generate_ai_insight(
+        asset_name=config['name'],
+        spot_price=spot_price,
+        zero_gamma=zero_gamma_strike,
+        call_wall=call_wall_strike,
+        put_wall=put_wall_strike,
+        regime=regime.split(" ")[0] + " " + regime.split(" ")[1] # 簡略化
+    )
+
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                        vertical_spacing=0.1, 
-                        row_heights=[0.7, 0.3],
-                        subplot_titles=(f"Dealer Net GEX Profile<br><span style='font-size: 14px; color: {'#00ff00' if spot_price > zero_gamma else '#ff0000'};'>{regime}</span>", "Implied Volatility Smile"))
-    
+                        row_heights=[0.7, 0.3], vertical_spacing=0.05,
+                        subplot_titles=(f"Dealer Net GEX Profile<br><span style='color:{regime_color}; font-size:16px;'>{regime}</span>", "Implied Volatility Smile"))
+
     # Call GEX
-    fig.add_trace(go.Bar(x=df_plot['Strike'], y=df_plot['Call_GEX'], name='Call GEX (レジスタンス)', marker_color='#00FFFF', opacity=0.8), row=1, col=1)
+    fig.add_trace(go.Bar(
+        x=df_filtered['Strike'], y=df_filtered['Call_GEX_M'],
+        name="Call GEX (レジスタンス)", marker_color="#00FFFF", opacity=0.8
+    ), row=1, col=1)
+
     # Put GEX
-    fig.add_trace(go.Bar(x=df_plot['Strike'], y=df_plot['Put_GEX'], name='Put GEX (サポート)', marker_color='#FF00FF', opacity=0.8), row=1, col=1)
+    fig.add_trace(go.Bar(
+        x=df_filtered['Strike'], y=df_filtered['Put_GEX_M'],
+        name="Put GEX (サポート)", marker_color="#FF00FF", opacity=0.8
+    ), row=1, col=1)
+
     # Net GEX
-    fig.add_trace(go.Scatter(x=df_plot['Strike'], y=df_plot['Net_GEX'], name='Net GEX', mode='lines+markers', line=dict(color='white', width=2), marker=dict(size=4)), row=1, col=1)
-    
-    # Zero Gamma Line
-    fig.add_vline(x=zero_gamma, line_dash="dashdot", line_color="red", line_width=2,
-                  annotation_text=f"Zero-Gamma<br>{zero_gamma}", annotation_position="top left", 
-                  annotation_bgcolor="red", annotation_font_color="white", row=1, col=1)
-                  
-    # Spot Price Line
-    fig.add_vline(x=spot_price, line_width=2, line_color="yellow",
-                  annotation_text=f"Current Spot<br>{spot_price}", annotation_position="bottom right",
-                  annotation_bgcolor="yellow", annotation_font_color="black", row=1, col=1)
-                  
+    fig.add_trace(go.Scatter(
+        x=df_filtered['Strike'], y=df_filtered['Total_GEX_M'],
+        name="Net GEX", mode='lines+markers',
+        line=dict(color='white', width=2), marker=dict(size=4)
+    ), row=1, col=1)
+
+    # Spot Price
+    fig.add_vline(x=spot_price, line_width=2, line_dash="solid", line_color="yellow", row=1, col=1)
+    fig.add_annotation(x=spot_price, y=-0.1, xref="x", yref="y domain", text=f"Current Spot<br>{spot_price}", showarrow=True, arrowhead=2, ax=0, ay=30, bgcolor="yellow", font=dict(color="black"), row=1, col=1)
+
+    # Zero Gamma
+    fig.add_vline(x=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="red", row=1, col=1)
+    fig.add_annotation(x=zero_gamma_strike, y=0.95, xref="x", yref="y domain", text=f"Zero-Gamma<br>{zero_gamma_strike}", showarrow=True, arrowhead=2, ax=-40, ay=-30, bgcolor="red", font=dict(color="white"), row=1, col=1)
+
     # IV Smile
-    fig.add_trace(go.Scatter(x=df_plot['Strike'], y=df_plot['IV_Avg'], name='IV', mode='lines+markers', line=dict(color='#FFA500', width=2), marker=dict(size=4)), row=2, col=1)
-    
+    fig.add_trace(go.Scatter(
+        x=df_filtered['Strike'], y=df_filtered['Avg_IV'],
+        name="IV", mode='lines+markers', line=dict(color='orange', width=2)
+    ), row=2, col=1)
+
+    # Layout
+    expiry_match = re.search(r'-exp-(.*?)-show', prefix_pattern) if asset_key != "ES" else re.search(r'-exp-(.*?)-show', prefix_pattern)
+    # 実際のファイル名から抽出する方が安全
+    sb_files = sorted(glob.glob(f"{prefix_pattern}side-by-side*.csv"))
+    expiry_str = "Unknown"
+    if sb_files:
+        em = re.search(r'-exp-(.*?)-show', sb_files[-1])
+        if em:
+            expiry_str = em.group(1)
+
     fig.update_layout(
-        title=f"Quant Options Radar: {config['name']} | Expiry: {Path(sb_path).stem.split('-exp-')[-1].split('-')[0]}<br><span style='font-size: 13px; color: #aaaaaa;'>As of: {data_date}</span>",
-        xaxis_title="",
-        yaxis_title="GEX ($M)",
-        xaxis2_title="Strike Price",
-        yaxis2_title="IV (%)",
+        title=f"Quant Options Radar: {config['name']} | Expiry: {expiry_str}<br><span style='font-size:12px;color:gray;'>As of: {file_date}</span>",
         template="plotly_dark",
         barmode='relative',
-        hovermode='x unified',
-        height=800,
+        hovermode="x unified",
+        height=850,
         margin=dict(l=50, r=50, t=100, b=50),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
+    fig.update_yaxes(title_text="GEX ($M)", row=1, col=1)
+    fig.update_yaxes(title_text="IV (%)", row=2, col=1)
+    fig.update_xaxes(title_text="Strike Price", row=2, col=1)
+
+    # Responsive configuration
+    config_plotly = {'responsive': True, 'displayModeBar': False}
+    plot_html = fig.to_html(full_html=False, include_plotlyjs='cdn', config=config_plotly)
+
+    return plot_html, ai_insight_html
+
+def generate_html(asset_key, config, plot_html, ai_insight_html):
+    # タブナビゲーションの生成
+    tabs_html = ""
+    for k, v in ASSET_CONFIG.items():
+        active = "active" if k == asset_key else ""
+        tabs_html += f'<a href="{v["filename"]}" class="tab {active}">{v["name"]}</a>'
     
-    html_str = fig.to_html(full_html=False, include_plotlyjs='cdn')
+    # AIインサイトパネルのスタイル（Canary Radar風）
+    insight_panel = f"""
+    <div class="ai-insight-panel">
+        <h3 style="color: #ff9900; margin-top: 0; font-size: 16px; border-bottom: 1px solid #ff9900; padding-bottom: 8px;">
+            <span style="font-size: 1.2em;">●</span> DAILY QUANT INSIGHT (Powered by Gemini AI)
+        </h3>
+        <div style="font-size: 14px; line-height: 1.6; color: #e0e0e0;">
+            {ai_insight_html}
+        </div>
+    </div>
+    """
     
-    nav_and_container = f"""
+    html_content = f"""
     <!DOCTYPE html>
-    <html>
+    <html lang="ja">
     <head>
-        <meta charset="utf-8">
+        <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Quant Options Radar - {config['name']}</title>
+        <title>Quant GEX Radar - {config['name']}</title>
         <style>
-            body {{ background-color: #111111; color: white; font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 0; overflow-x: hidden; }}
-            .nav-bar {{ display: flex; flex-wrap: wrap; background-color: #000; padding: 10px; border-bottom: 1px solid #333; }}
-            .nav-bar a {{ color: #ccc; text-decoration: none; padding: 8px 15px; margin: 5px; border-radius: 4px; font-size: 14px; font-weight: bold; background-color: #222; transition: all 0.2s; }}
-            .nav-bar a:hover {{ background-color: #444; color: white; }}
-            .active-nav {{ border: 1px solid #fff; }}
-            .chart-container {{ width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }}
-            .chart-inner {{ min-width: 800px; }}
-            .mobile-notice {{ display: none; text-align: center; font-size: 12px; color: #888; padding: 5px; }}
-            .insight-panel {{ margin: 20px auto; max-width: 1200px; padding: 20px; background-color: #1a1a1a; border-left: 4px solid #FFA500; border-radius: 4px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }}
-            .insight-title {{ color: #FFA500; font-size: 16px; font-weight: bold; margin-bottom: 15px; display: flex; align-items: center; }}
-            .insight-title span {{ margin-right: 10px; font-size: 20px; }}
-            .insight-content {{ line-height: 1.6; font-size: 14px; }}
-            .insight-content h3 {{ color: #ddd; font-size: 15px; border-bottom: 1px solid #333; padding-bottom: 5px; margin-top: 15px; }}
-            .insight-content ul {{ padding-left: 20px; }}
-            .insight-content li {{ margin-bottom: 8px; }}
+            body {{ background-color: #111; color: white; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; }}
+            .nav {{ background-color: #222; padding: 10px 20px; display: flex; flex-wrap: wrap; gap: 10px; border-bottom: 2px solid #333; }}
+            .nav a {{ color: #aaa; text-decoration: none; padding: 8px 16px; border-radius: 4px; font-size: 14px; transition: 0.3s; background-color: #333; }}
+            .nav a:hover {{ background-color: #444; color: white; }}
+            .nav a.active {{ background-color: #0055ff; color: white; font-weight: bold; }}
+            .container {{ padding: 20px; max-width: 1600px; margin: 0 auto; }}
+            .chart-container {{ width: 100%; min-height: 850px; }}
+            /* AIインサイトパネルのスタイル */
+            .ai-insight-panel {{
+                background-color: #1a1a1a;
+                border-left: 4px solid #ff9900;
+                border-radius: 4px;
+                padding: 20px;
+                margin: 20px auto;
+                max-width: 1500px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            }}
+            /* Markdownの箇条書きや見出しを綺麗に見せる */
+            .ai-insight-panel p {{ margin-bottom: 10px; }}
+            .ai-insight-panel ul {{ margin-top: 0; padding-left: 20px; }}
+            .ai-insight-panel li {{ margin-bottom: 5px; }}
+            .ai-insight-panel strong {{ color: #ffffff; font-weight: 600; background-color: #333; padding: 2px 4px; border-radius: 3px; }}
             @media (max-width: 768px) {{
-                .mobile-notice {{ display: block; }}
-                .nav-bar {{ justify-content: center; }}
-                .insight-panel {{ margin: 10px; padding: 15px; }}
+                .nav {{ padding: 10px; justify-content: center; }}
+                .nav a {{ padding: 6px 12px; font-size: 12px; }}
+                .container {{ padding: 10px; }}
+                .chart-container {{ min-height: 600px; }}
+                .ai-insight-panel {{ margin: 10px; padding: 15px; }}
             }}
         </style>
     </head>
     <body>
-    <div class="nav-bar">
-        <a href="es.html" style="color: #00BFFF;" {'class="active-nav"' if asset_key == "ES" else ''}>📈 S&P 500 (ES)</a>
-        <a href="index.html" style="color: #00FFFF;" {'class="active-nav"' if asset_key == "SI" else ''}>🪙 Silver (SI)</a>
-        <a href="ng.html" style="color: #FF00FF;" {'class="active-nav"' if asset_key == "NG" else ''}>🔥 Natural Gas (NG)</a>
-        <a href="hg.html" style="color: #FF8C00;" {'class="active-nav"' if asset_key == "HG" else ''}>🥉 Copper (HG)</a>
-        <a href="zs.html" style="color: #32CD32;" {'class="active-nav"' if asset_key == "ZS" else ''}>🌱 Soybeans (ZS)</a>
-        <a href="zc.html" style="color: #FFD700;" {'class="active-nav"' if asset_key == "ZC" else ''}>🌽 Corn (ZC)</a>
-        <a href="zw.html" style="color: #DAA520;" {'class="active-nav"' if asset_key == "ZW" else ''}>🌾 Wheat (ZW)</a>
-        <a href="gex_trading_guide.html" style="color: #FFFF00;">📖 Trading Manual</a>
-    </div>
-    <div class="mobile-notice">📱 グラフを左右にスワイプして詳細を確認できます</div>
-    <div class="chart-container">
-        <div class="chart-inner">
-            {html_str}
+        <div class="nav">
+            {tabs_html}
+            <a href="gex_trading_guide.html" style="margin-left: auto; background-color: #ff9900; color: #111;">📖 取引マニュアル</a>
         </div>
-    </div>
-    <div class="insight-panel">
-        <div class="insight-title"><span>●</span> DAILY QUANT INSIGHT (Powered by Gemini AI)</div>
-        <div class="insight-content">
-            {ai_insight_html}
+        <div class="container">
+            <div class="chart-container">
+                {plot_html}
+            </div>
+            {insight_panel}
         </div>
-    </div>
     </body>
     </html>
     """
     
-    out_path = DOCS_DIR / config['filename']
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(nav_and_container)
-    print(f"[*] Saved {out_path}")
+    filepath = DOCS_DIR / config['filename']
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(html_content)
 
 def main():
-    DOCS_DIR.mkdir(exist_ok=True, parents=True)
+    DOCS_DIR.mkdir(exist_ok=True)
+    
+    # .nojekyll の生成 (GitHub Pages 対策)
     with open(DOCS_DIR / ".nojekyll", "w") as f:
         pass
-        
-    for key, config in ASSET_CONFIG.items():
+
+    for asset_key, config in ASSET_CONFIG.items():
         try:
-            process_asset(key, config)
+            result = process_asset(asset_key, config)
+            if result:
+                plot_html, ai_insight_html = result
+                generate_html(asset_key, config, plot_html, ai_insight_html)
+                print(f"[+] Successfully generated {config['filename']}")
+            else:
+                print(f"[-] Skipped {config['name']} due to missing or invalid data.")
         except Exception as e:
-            print(f"Error: {config['name']} の処理中にエラーが発生しました: {e}")
+            print(f"[Error] Failed to process {config['name']}: {e}")
+            traceback.print_exc()
 
 if __name__ == "__main__":
     main()
