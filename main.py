@@ -49,6 +49,7 @@ def clean_val(val):
 
 def load_barchart_csv(asset_key):
     prefix = asset_key.lower()
+    # プレフィックスとキーワードのみで柔軟にファイル検索
     sb_files = sorted(glob.glob(f"{prefix}*side-by-side*.csv"))
     gk_files = sorted(glob.glob(f"{prefix}*volatility-greeks*.csv"))
     
@@ -67,7 +68,7 @@ def load_barchart_csv(asset_key):
     return df_sb, df_gk, expiry
 
 # ==========================================
-# AI インサイト生成 (Static Model Selection)
+# AI インサイト生成 (Static Model & Strict Template)
 # ==========================================
 def generate_ai_insight(asset_name, spot, call_wall, put_wall, zero_gamma, regime):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -109,7 +110,7 @@ Zero-Gamma: {zero_gamma}
 </div>
 """
     try:
-        # 動的探索を廃止し、無料枠（1500回/日）の多い1.5系を明示的に指定。
+        # 動的探索を廃止し、無料枠（1500回/日）の多い1.5-flashを明示的に指定。
         # 1日20回制限で即死する2.5-flashへの誤爆を完全に防ぐ。
         target_models = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]
             
@@ -120,13 +121,14 @@ Zero-Gamma: {zero_gamma}
             for attempt in range(2):
                 try:
                     response = model.generate_content(prompt)
+                    # 不要なMarkdown装飾を強制パージ
                     html_res = response.text.replace('```html', '').replace('```', '').strip()
                     return html_res
                 except Exception as e:
                     last_error = str(e)
                     if "429" in last_error or "Quota" in last_error:
                         print(f"[*] API Limit/Quota Hit on {m_name}. Waiting 60s... (Attempt {attempt+1})")
-                        time.sleep(60)
+                        time.sleep(60) # 429を踏んだら1分寝て再アタック（カナリアレーダー準拠の装甲）
                     else:
                         print(f"[-] Model {m_name} failed. Falling back to next model.")
                         time.sleep(2)
@@ -151,40 +153,61 @@ def process_asset(asset_key, config):
     df_sb['Strike'] = df_sb['Strike'].apply(parse_strike)
     df_gk['Strike'] = df_gk['Strike'].apply(parse_strike)
     
-    # 動的カラム解決 (GreeksとSide-by-Sideの不整合対策)
-    def extract_oi(df, type_name):
-        type_mask = df['Type'].astype(str).str.contains(type_name, case=False, na=False)
-        cols = [c for c in df.columns if 'Open Int' in c or 'OI' in c]
-        if not cols:
-            return pd.Series(0, index=df.index)
-        oi_col = cols[0]
-        res = pd.Series(0.0, index=df.index)
-        res[type_mask] = df.loc[type_mask, oi_col].apply(clean_val)
-        return res
+    # --- 【バグ修正】安全な列抽出と集約マージ (duplicate labels 回避) ---
+    
+    # 1. Side-by-Side から Open Interest を抽出
+    oi_cols = [c for c in df_sb.columns if 'Open Int' in c or 'OI' in c]
+    if len(oi_cols) >= 2:
+        df_sb['Call_OpenInt'] = df_sb[oi_cols[0]].apply(clean_val)
+        df_sb['Put_OpenInt'] = df_sb[oi_cols[1]].apply(clean_val)
+    elif len(oi_cols) == 1:
+        mask_c = df_sb['Type'].astype(str).str.contains('Call', case=False, na=False)
+        mask_p = df_sb['Type'].astype(str).str.contains('Put', case=False, na=False)
+        df_sb['Call_OpenInt'] = 0.0
+        df_sb['Put_OpenInt'] = 0.0
+        df_sb.loc[mask_c, 'Call_OpenInt'] = df_sb.loc[mask_c, oi_cols[0]].apply(clean_val)
+        df_sb.loc[mask_p, 'Put_OpenInt'] = df_sb.loc[mask_p, oi_cols[0]].apply(clean_val)
+    else:
+        df_sb['Call_OpenInt'] = 0.0
+        df_sb['Put_OpenInt'] = 0.0
 
-    df_sb['Call_OpenInt'] = extract_oi(df_sb, 'Call')
-    df_sb['Put_OpenInt'] = extract_oi(df_sb, 'Put')
-    
-    # 縦並びのGreeksからCall/Putを分離
-    call_gk = df_gk[df_gk['Type'].astype(str).str.contains('Call', case=False, na=False)].copy()
-    put_gk = df_gk[df_gk['Type'].astype(str).str.contains('Put', case=False, na=False)].copy()
-    
-    # 列名の正規化
-    for col in call_gk.columns:
-        if 'Gamma' in col: call_gk.rename(columns={col: 'Gamma_Call'}, inplace=True)
-        if 'IV' in col and 'Skew' not in col: call_gk.rename(columns={col: 'IV_Call'}, inplace=True)
-    for col in put_gk.columns:
-        if 'Gamma' in col: put_gk.rename(columns={col: 'Gamma_Put'}, inplace=True)
-        if 'IV' in col and 'Skew' not in col: put_gk.rename(columns={col: 'IV_Put'}, inplace=True)
+    # 2. Volatility Greeks から Gamma と IV を抽出
+    gamma_cols = [c for c in df_gk.columns if 'Gamma' in c]
+    iv_cols = [c for c in df_gk.columns if 'IV' in c and 'Skew' not in c]
 
-    # Strikeを軸にマージ
-    df_call_sb = df_sb[df_sb['Call_OpenInt'] > 0][['Strike', 'Call_OpenInt']].drop_duplicates('Strike')
-    df_put_sb = df_sb[df_sb['Put_OpenInt'] > 0][['Strike', 'Put_OpenInt']].drop_duplicates('Strike')
-    
-    df_merged = call_gk[['Strike', 'Gamma_Call', 'IV_Call']].merge(df_call_sb, on='Strike', how='outer')
-    df_merged = df_merged.merge(put_gk[['Strike', 'Gamma_Put', 'IV_Put']], on='Strike', how='outer')
-    df_merged = df_merged.merge(df_put_sb, on='Strike', how='outer')
-    df_merged = df_merged.fillna(0)
+    if len(gamma_cols) >= 2:
+        df_gk['Gamma_Call'] = df_gk[gamma_cols[0]].apply(clean_val)
+        df_gk['Gamma_Put'] = df_gk[gamma_cols[1]].apply(clean_val)
+    elif len(gamma_cols) == 1:
+        mask_c = df_gk['Type'].astype(str).str.contains('Call', case=False, na=False)
+        mask_p = df_gk['Type'].astype(str).str.contains('Put', case=False, na=False)
+        df_gk['Gamma_Call'] = 0.0
+        df_gk['Gamma_Put'] = 0.0
+        df_gk.loc[mask_c, 'Gamma_Call'] = df_gk.loc[mask_c, gamma_cols[0]].apply(clean_val)
+        df_gk.loc[mask_p, 'Gamma_Put'] = df_gk.loc[mask_p, gamma_cols[0]].apply(clean_val)
+    else:
+        df_gk['Gamma_Call'] = 0.0
+        df_gk['Gamma_Put'] = 0.0
+
+    if len(iv_cols) >= 2:
+        df_gk['IV_Call'] = df_gk[iv_cols[0]].apply(clean_val)
+        df_gk['IV_Put'] = df_gk[iv_cols[1]].apply(clean_val)
+    elif len(iv_cols) == 1:
+        mask_c = df_gk['Type'].astype(str).str.contains('Call', case=False, na=False)
+        mask_p = df_gk['Type'].astype(str).str.contains('Put', case=False, na=False)
+        df_gk['IV_Call'] = 0.0
+        df_gk['IV_Put'] = 0.0
+        df_gk.loc[mask_c, 'IV_Call'] = df_gk.loc[mask_c, iv_cols[0]].apply(clean_val)
+        df_gk.loc[mask_p, 'IV_Put'] = df_gk.loc[mask_p, iv_cols[0]].apply(clean_val)
+    else:
+        df_gk['IV_Call'] = 0.0
+        df_gk['IV_Put'] = 0.0
+
+    # 3. StrikeでGroupbyして不要な列を捨て、安全にMerge
+    df_sb_agg = df_sb.groupby('Strike', as_index=False)[['Call_OpenInt', 'Put_OpenInt']].sum()
+    df_gk_agg = df_gk.groupby('Strike', as_index=False)[['Gamma_Call', 'Gamma_Put', 'IV_Call', 'IV_Put']].max()
+
+    df_merged = df_gk_agg.merge(df_sb_agg, on='Strike', how='outer').fillna(0)
                          
     mult = config['multiplier']
     df_merged['Call_GEX'] = df_merged['Gamma_Call'] * df_merged['Call_OpenInt'] * mult * 100 / 1e6 
@@ -205,6 +228,7 @@ def process_asset(asset_key, config):
     if spot_price == 0.0:
         spot_price = df_merged['Strike'].median()
 
+    # チャート表示範囲の最適化
     min_strike = spot_price * 0.8
     max_strike = spot_price * 1.2
     margin = (max_strike - min_strike) * 0.1
@@ -213,15 +237,15 @@ def process_asset(asset_key, config):
     if df_filtered.empty:
         df_filtered = df_merged.copy()
 
-    # Zero-Gamma 算出 (線形補間)
+    # --- Zero-Gamma 算出 (線形補間) ---
     df_sorted = df_filtered.sort_values('Strike').reset_index(drop=True)
     df_sorted['Total_OI'] = df_sorted['Call_OpenInt'] + df_sorted['Put_OpenInt']
-    valid_mask = df_sorted['Total_OI'] > df_sorted['Total_OI'].max() * 0.05
+    valid_mask = df_sorted['Total_OI'] > df_sorted['Total_OI'].max() * 0.05 # 流動性ノイズの排除
     df_valid = df_sorted[valid_mask].reset_index(drop=True)
     
     if not df_valid.empty:
         signs = np.sign(df_valid['Total_GEX'])
-        flips = np.where(np.diff(signs) != 0)[0]
+        flips = np.where(np.diff(signs) != 0)[0] # 符号反転の特定
         
         if len(flips) > 0:
             closest_flip_strike = None
@@ -247,7 +271,7 @@ def process_asset(asset_key, config):
     regime = "POSITIVE GAMMA REGIME (押し目買い優位)" if spot_price > zero_gamma_strike else "NEGATIVE GAMMA REGIME (パニック売り警戒)"
     regime_color = "#44c265" if spot_price > zero_gamma_strike else "#fe8983"
     
-    # グラフ描画
+    # --- グラフ描画 ---
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
     
     fig.add_trace(go.Bar(x=df_filtered['Strike'], y=df_filtered['Call_GEX'], name='Call GEX (レジスタンス)', marker_color='#06bbdf'), row=1, col=1)
@@ -323,8 +347,8 @@ def main():
             process_asset(key, config)
             # レートリミット回避のためのインターバル
             if i < len(assets) - 1:
-                print(f"[...] Waiting 10 seconds before next asset to avoid Rate Limits.")
-                time.sleep(10) 
+                print(f"[...] Waiting 15 seconds before next asset to avoid Rate Limits.")
+                time.sleep(15) 
         except Exception as e:
             print(f"Error: Failed to process {config['name']}: {e}")
 
