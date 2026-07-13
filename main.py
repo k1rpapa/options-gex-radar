@@ -3,7 +3,7 @@ import glob
 import pandas as pd
 import numpy as np
 import re
-import time
+import json
 from datetime import datetime
 from pathlib import Path
 import yfinance as yf
@@ -29,7 +29,7 @@ ASSET_CONFIG = {
 }
 
 # ==========================================
-# ヘルパー関数
+# ヘルパー関数 (堅牢なデータ抽出)
 # ==========================================
 def parse_strike(val):
     s = str(val).split('-')[0].replace(',', '').replace('s', '').strip()
@@ -49,7 +49,6 @@ def clean_val(val):
 
 def load_barchart_csv(asset_key):
     prefix = asset_key.lower()
-    # プレフィックスとキーワードのみで確実にファイルをキャッチ
     sb_files = sorted(glob.glob(f"{prefix}*side-by-side*.csv"))
     gk_files = sorted(glob.glob(f"{prefix}*volatility-greeks*.csv"))
     
@@ -68,145 +67,129 @@ def load_barchart_csv(asset_key):
     return df_sb, df_gk, expiry
 
 # ==========================================
-# AI インサイト生成 (完全ハードコード版)
+# AI インサイト生成 (Batched Request Architecture)
 # ==========================================
-def get_best_ai_model():
-    # 動的探索(list_models)は、Google側の仕様変更により2.5-flash(1日20回制限)を
-    # 誤って取得してしまうリスクがあるため完全に廃止。
-    # 無料枠(1500回/日)が確約されている 'gemini-1.5-flash' をハードコードする。
-    target_model = "gemini-1.5-flash"
-    print(f"[*] AI Model Hardcoded: {target_model}")
-    return target_model
-
-def generate_ai_insight(asset_name, spot, call_wall, put_wall, zero_gamma, regime):
+def generate_batched_insights(asset_summaries):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return "<p style='color:red;'>[エラー] APIキーが設定されていません。</p>"
+        print("[-] Error: GEMINI_API_KEY is missing.")
+        return {k: {"error": "[エラー] APIキーが設定されていません。"} for k in asset_summaries.keys()}
         
     genai.configure(api_key=api_key)
+    # 生存が確認されている2.5-flashを使用（バッチ処理により1日20回制限を回避）
+    target_model = "gemini-2.5-flash"
     
     prompt = f"""
-あなたは冷徹で論理的なクオンツ・アナリストです。以下のデータに基づき、指定したHTMLフォーマットにのみ従って作戦指令を出力してください。
-Markdownのコードブロック（```html 等）や、挨拶、追加の説明は絶対に含めないでください。デザインやHTML構造の改変は一切禁止します。
+あなたは冷徹で論理的なクオンツ・アナリストです。
+以下の全銘柄のGEXデータに基づき、各銘柄ごとの作戦指令を考案し、指定されたJSONフォーマットにのみ従って出力してください。
+Markdown（```json 等）の装飾や挨拶は一切不要です。純粋なJSON文字列のみを出力してください。
 
-データ:
-銘柄: {asset_name}
-現在価格: {spot}
-Call Wall (レジスタンス): {call_wall}
-Put Wall (サポート): {put_wall}
-Zero-Gamma: {zero_gamma}
-レジーム: {regime}
+【データ】
+{json.dumps(asset_summaries, ensure_ascii=False, indent=2)}
 
-出力フォーマット（必ず以下のHTML構造のまま、[ ] の部分だけを分析内容で埋めて出力すること）:
-<div style="background:#1a1d21; padding:16px; border-radius:8px; border-left:4px solid var(--primary); font-family:sans-serif; line-height:1.6; margin-top:20px;">
-    <h3 style="margin-top:0; color:#e0e0e0; font-size:16px; border-bottom:1px solid #333; padding-bottom:8px;">{asset_name} GEX オペレーション指令</h3>
-    
-    <div style="margin-bottom:12px;">
-        <span style="background:rgba(20, 108, 46, 0.3); color:#44c265; padding:4px 8px; border-radius:4px; font-weight:bold; font-size:12px; margin-right:8px;">基本方針</span>
-        <span style="color:#c4c7c5; font-size:14px;">[現状のレジームと価格位置に基づく基本方針を1文で記述]</span>
-    </div>
-    
-    <div style="margin-bottom:12px;">
-        <span style="background:rgba(11, 87, 208, 0.3); color:#76acff; padding:4px 8px; border-radius:4px; font-weight:bold; font-size:12px; margin-right:8px;">エントリー</span>
-        <span style="color:#c4c7c5; font-size:14px;">[サポートからの反発やレジスタンス突破時のエントリー目安を簡潔に記述]</span>
-    </div>
-    
-    <div>
-        <span style="background:rgba(179, 38, 30, 0.3); color:#fe8983; padding:4px 8px; border-radius:4px; font-weight:bold; font-size:12px; margin-right:8px;">撤退ライン</span>
-        <span style="color:#c4c7c5; font-size:14px;">[サポート割れ等の厳格な損切り・撤退ラインを簡潔に記述]</span>
-    </div>
-</div>
+【出力すべきJSONフォーマット】
+{{
+  "ES": {{
+    "policy": "現状のレジームと価格位置に基づく基本方針を1文で記述",
+    "entry": "サポートからの反発やレジスタンス突破時のエントリー目安を簡潔に記述",
+    "exit": "サポート割れ等の厳格な損切り・撤退ラインを簡潔に記述"
+  }},
+  "SI": {{ ... }},
+  "NG": {{ ... }},
+  "HG": {{ ... }},
+  "ZS": {{ ... }},
+  "ZC": {{ ... }},
+  "ZW": {{ ... }}
+}}
 """
     try:
-        target_model_name = get_best_ai_model()
-        model = genai.GenerativeModel(model_name=target_model_name)
+        print(f"[*] Dispatching batched request to {target_model}...")
+        model = genai.GenerativeModel(model_name=target_model)
+        response = model.generate_content(prompt)
+        res_text = response.text.strip()
         
-        last_error = "None"
-        for attempt in range(2):
-            try:
-                response = model.generate_content(prompt)
-                # 不要なMarkdown装飾を強制パージ
-                html_res = response.text.replace('```html', '').replace('```', '').strip()
-                return html_res
-            except Exception as e:
-                last_error = str(e)
-                if "429" in last_error or "Quota" in last_error:
-                    print(f"[*] API Limit/Quota Hit on {target_model_name}. Waiting 60s... (Attempt {attempt+1})")
-                    time.sleep(60) # 429を踏んだら1分寝て再アタック
-                else:
-                    print(f"[-] Model {target_model_name} failed: {last_error}")
-                    time.sleep(2)
-                    break 
-                    
-        return f"<p style='color:red;'>[AI生成エラー] 制限超過または一時的な障害です。<br>詳細: {last_error}</p>"
-        
+        # Markdownのコードブロック記号を安全にパージ
+        if res_text.startswith("```json"):
+            res_text = res_text[7:]
+        elif res_text.startswith("```"):
+            res_text = res_text[3:]
+        if res_text.endswith("```"):
+            res_text = res_text[:-3]
+            
+        insights = json.loads(res_text.strip())
+        print("[+] AI Insights successfully parsed.")
+        return insights
     except Exception as e:
-        return f"<p style='color:red;'>[致命的なエラー] API接続失敗: {e}</p>"
+        print(f"[-] Batched AI generation failed: {e}")
+        return {k: {"error": f"[AI生成エラー] モデルの呼び出し、またはJSONパースに失敗しました: {e}"} for k in asset_summaries.keys()}
+
+def format_ai_html(asset_name, insight_data):
+    if "error" in insight_data:
+        return f"<p style='color:#fe8983;'>{insight_data['error']}</p>"
+
+    policy = insight_data.get("policy", "データのパースに失敗しました。")
+    entry = insight_data.get("entry", "データのパースに失敗しました。")
+    exit_val = insight_data.get("exit", "データのパースに失敗しました。")
+
+    return f"""
+    <div style="background:#1a1d21; padding:16px; border-radius:8px; border-left:4px solid var(--primary); font-family:sans-serif; line-height:1.6; margin-top:20px;">
+        <h3 style="margin-top:0; color:#e0e0e0; font-size:16px; border-bottom:1px solid #333; padding-bottom:8px;">{asset_name} GEX オペレーション指令</h3>
+        <div style="margin-bottom:12px;">
+            <span style="background:rgba(20, 108, 46, 0.3); color:#44c265; padding:4px 8px; border-radius:4px; font-weight:bold; font-size:12px; margin-right:8px;">基本方針</span>
+            <span style="color:#c4c7c5; font-size:14px;">{policy}</span>
+        </div>
+        <div style="margin-bottom:12px;">
+            <span style="background:rgba(11, 87, 208, 0.3); color:#76acff; padding:4px 8px; border-radius:4px; font-weight:bold; font-size:12px; margin-right:8px;">エントリー</span>
+            <span style="color:#c4c7c5; font-size:14px;">{entry}</span>
+        </div>
+        <div>
+            <span style="background:rgba(179, 38, 30, 0.3); color:#fe8983; padding:4px 8px; border-radius:4px; font-weight:bold; font-size:12px; margin-right:8px;">撤退ライン</span>
+            <span style="color:#c4c7c5; font-size:14px;">{exit_val}</span>
+        </div>
+    </div>
+    """
 
 # ==========================================
-# コア処理 (GEX算出パイプライン)
+# コア処理 (データ計算とPlotlyグラフ生成)
 # ==========================================
-def process_asset(asset_key, config):
+def process_asset_data(asset_key, config):
     df_sb, df_gk, expiry = load_barchart_csv(asset_key)
     if df_sb is None:
         raise FileNotFoundError(f"CSV files not found for {asset_key}")
         
+    # --- Index-based Column Extraction (重複ラベルエラー回避) ---
     df_sb.columns = [str(c).strip() for c in df_sb.columns]
     df_gk.columns = [str(c).strip() for c in df_gk.columns]
     
     df_sb['Strike'] = df_sb['Strike'].apply(parse_strike)
     df_gk['Strike'] = df_gk['Strike'].apply(parse_strike)
     
-    # --- 安全な列抽出 (duplicate labels 回避) ---
-    # 1. Side-by-Side から Open Interest を抽出
-    oi_cols = [c for c in df_sb.columns if 'Open Int' in c or 'OI' in c]
-    if len(oi_cols) >= 2:
-        df_sb['Call_OpenInt'] = df_sb[oi_cols[0]].apply(clean_val)
-        df_sb['Put_OpenInt'] = df_sb[oi_cols[1]].apply(clean_val)
-    elif len(oi_cols) == 1:
-        mask_c = df_sb['Type'].astype(str).str.contains('Call', case=False, na=False)
-        mask_p = df_sb['Type'].astype(str).str.contains('Put', case=False, na=False)
-        df_sb['Call_OpenInt'] = 0.0
-        df_sb['Put_OpenInt'] = 0.0
-        df_sb.loc[mask_c, 'Call_OpenInt'] = df_sb.loc[mask_c, oi_cols[0]].apply(clean_val)
-        df_sb.loc[mask_p, 'Put_OpenInt'] = df_sb.loc[mask_p, oi_cols[0]].apply(clean_val)
+    oi_idx = [i for i, col in enumerate(df_sb.columns) if 'Open Int' in col or 'OI' in col]
+    if len(oi_idx) >= 2:
+        df_sb['Call_OpenInt'] = df_sb.iloc[:, oi_idx[0]].apply(clean_val)
+        df_sb['Put_OpenInt'] = df_sb.iloc[:, oi_idx[1]].apply(clean_val)
     else:
         df_sb['Call_OpenInt'] = 0.0
         df_sb['Put_OpenInt'] = 0.0
 
-    # 2. Volatility Greeks から Gamma と IV を抽出
-    gamma_cols = [c for c in df_gk.columns if 'Gamma' in c]
-    iv_cols = [c for c in df_gk.columns if 'IV' in c and 'Skew' not in c]
+    gamma_idx = [i for i, col in enumerate(df_gk.columns) if 'Gamma' in col]
+    iv_idx = [i for i, col in enumerate(df_gk.columns) if 'IV' in col and 'Skew' not in col]
 
-    if len(gamma_cols) >= 2:
-        df_gk['Gamma_Call'] = df_gk[gamma_cols[0]].apply(clean_val)
-        df_gk['Gamma_Put'] = df_gk[gamma_cols[1]].apply(clean_val)
-    elif len(gamma_cols) == 1:
-        mask_c = df_gk['Type'].astype(str).str.contains('Call', case=False, na=False)
-        mask_p = df_gk['Type'].astype(str).str.contains('Put', case=False, na=False)
-        df_gk['Gamma_Call'] = 0.0
-        df_gk['Gamma_Put'] = 0.0
-        df_gk.loc[mask_c, 'Gamma_Call'] = df_gk.loc[mask_c, gamma_cols[0]].apply(clean_val)
-        df_gk.loc[mask_p, 'Gamma_Put'] = df_gk.loc[mask_p, gamma_cols[0]].apply(clean_val)
+    if len(gamma_idx) >= 2:
+        df_gk['Gamma_Call'] = df_gk.iloc[:, gamma_idx[0]].apply(clean_val)
+        df_gk['Gamma_Put'] = df_gk.iloc[:, gamma_idx[1]].apply(clean_val)
     else:
         df_gk['Gamma_Call'] = 0.0
         df_gk['Gamma_Put'] = 0.0
 
-    if len(iv_cols) >= 2:
-        df_gk['IV_Call'] = df_gk[iv_cols[0]].apply(clean_val)
-        df_gk['IV_Put'] = df_gk[iv_cols[1]].apply(clean_val)
-    elif len(iv_cols) == 1:
-        mask_c = df_gk['Type'].astype(str).str.contains('Call', case=False, na=False)
-        mask_p = df_gk['Type'].astype(str).str.contains('Put', case=False, na=False)
-        df_gk['IV_Call'] = 0.0
-        df_gk['IV_Put'] = 0.0
-        df_gk.loc[mask_c, 'IV_Call'] = df_gk.loc[mask_c, iv_cols[0]].apply(clean_val)
-        df_gk.loc[mask_p, 'IV_Put'] = df_gk.loc[mask_p, iv_cols[0]].apply(clean_val)
+    if len(iv_idx) >= 2:
+        df_gk['IV_Call'] = df_gk.iloc[:, iv_idx[0]].apply(clean_val)
+        df_gk['IV_Put'] = df_gk.iloc[:, iv_idx[1]].apply(clean_val)
     else:
         df_gk['IV_Call'] = 0.0
         df_gk['IV_Put'] = 0.0
 
-    # 3. StrikeでGroupbyして不要な列を捨て、安全にMerge
+    # 重複列を排除してStrikeで集約
     df_sb_agg = df_sb.groupby('Strike', as_index=False)[['Call_OpenInt', 'Put_OpenInt']].sum()
     df_gk_agg = df_gk.groupby('Strike', as_index=False)[['Gamma_Call', 'Gamma_Put', 'IV_Call', 'IV_Put']].max()
 
@@ -231,7 +214,6 @@ def process_asset(asset_key, config):
     if spot_price == 0.0:
         spot_price = df_merged['Strike'].median()
 
-    # チャート表示範囲の最適化
     min_strike = spot_price * 0.8
     max_strike = spot_price * 1.2
     margin = (max_strike - min_strike) * 0.1
@@ -274,6 +256,15 @@ def process_asset(asset_key, config):
     regime = "POSITIVE GAMMA REGIME (押し目買い優位)" if spot_price > zero_gamma_strike else "NEGATIVE GAMMA REGIME (パニック売り警戒)"
     regime_color = "#44c265" if spot_price > zero_gamma_strike else "#fe8983"
     
+    # AIプロンプト用のデータサマリー構築
+    data_summary = {
+        "spot": spot_price,
+        "call_wall": call_wall_strike,
+        "put_wall": put_wall_strike,
+        "zero_gamma": zero_gamma_strike,
+        "regime": regime
+    }
+    
     # --- グラフ描画 ---
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
     
@@ -301,59 +292,73 @@ def process_asset(asset_key, config):
     fig.update_xaxes(gridcolor="#2d2f38", row=1, col=1)
 
     graph_html = fig.to_html(full_html=False, include_plotlyjs='cdn')
-    
-    ai_html = generate_ai_insight(config['name'], spot_price, call_wall_strike, put_wall_strike, zero_gamma_strike, regime)
-
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="ja" data-theme="dark">
-    <head>
-        <meta charset="UTF-8">
-        <title>Quant GEX Radar - {config['name']}</title>
-        <style>
-            body {{ background-color: #101218; color: #ffffff; font-family: sans-serif; margin: 0; padding: 0; }}
-            .nav-tabs {{ background: #1a1d21; padding: 10px; display: flex; gap: 10px; overflow-x: auto; }}
-            .nav-tabs a {{ color: #c4c7c5; text-decoration: none; padding: 8px 16px; border-radius: 4px; font-size: 14px; white-space: nowrap; }}
-            .nav-tabs a:hover {{ background: #2d2f38; }}
-            .nav-tabs a.active {{ background: #0b57d0; color: white; font-weight: bold; }}
-            .container {{ max-width: 1400px; margin: 0 auto; padding: 20px; }}
-            .ai-panel {{ margin-top: 30px; border-top: 1px solid #2d2f38; padding-top: 20px; }}
-            .ai-header {{ color: #f9ab00; font-weight: bold; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }}
-        </style>
-    </head>
-    <body>
-        <div class="nav-tabs">
-            {''.join([f'<a href="{cfg["filename"]}" class="{"active" if k == asset_key else ""}">{cfg["name"]}</a>' for k, cfg in ASSET_CONFIG.items()])}
-            <a href="gex_trading_guide.html" style="margin-left:auto; color: #f9ab00;">■ 取引マニュアル</a>
-        </div>
-        <div class="container">
-            {graph_html}
-            <div class="ai-panel">
-                <div class="ai-header">● DAILY QUANT INSIGHT (Powered by Gemini AI)</div>
-                {ai_html}
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-    
-    with open(DOCS_DIR / config['filename'], "w", encoding="utf-8") as f:
-        f.write(html_content)
-        
-    print(f"[+] Successfully generated {config['filename']}")
+    return graph_html, data_summary, expiry
 
 def main():
-    assets = list(ASSET_CONFIG.items())
-    for i, (key, config) in enumerate(assets):
-        print(f"\n[*] Processing {config['name']}...")
+    graphs = {}
+    asset_summaries = {}
+    
+    # フェーズ1: 全アセットのデータ計算とグラフ生成
+    for key, config in ASSET_CONFIG.items():
+        print(f"[*] Processing data for {config['name']}...")
         try:
-            process_asset(key, config)
-            # レートリミット回避のためのインターバル
-            if i < len(assets) - 1:
-                print(f"[...] Waiting 15 seconds before next asset to avoid Rate Limits.")
-                time.sleep(15) 
+            graph_html, summary, _ = process_asset_data(key, config)
+            graphs[key] = graph_html
+            asset_summaries[key] = summary
         except Exception as e:
-            print(f"Error: Failed to process {config['name']}: {e}")
+            print(f"[-] Error processing {config['name']}: {e}")
+            graphs[key] = f"<p style='color:red;'>データ処理エラー: {e}</p>"
+
+    # フェーズ2: AIへのバッチリクエスト (1リクエストで全銘柄処理)
+    print("\n[*] Sending batched request to Gemini API...")
+    ai_insights = {}
+    if asset_summaries:
+        ai_insights = generate_batched_insights(asset_summaries)
+
+    # フェーズ3: プレゼンテーション結合とHTML出力
+    for key, config in ASSET_CONFIG.items():
+        print(f"[*] Building HTML for {config['name']}...")
+        graph_html = graphs.get(key, "")
+        insight_data = ai_insights.get(key, {"error": "インサイトデータの取得に失敗しました。"})
+        ai_html = format_ai_html(config['name'], insight_data)
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html lang="ja" data-theme="dark">
+        <head>
+            <meta charset="UTF-8">
+            <title>Quant GEX Radar - {config['name']}</title>
+            <style>
+                body {{ background-color: #101218; color: #ffffff; font-family: sans-serif; margin: 0; padding: 0; }}
+                .nav-tabs {{ background: #1a1d21; padding: 10px; display: flex; gap: 10px; overflow-x: auto; }}
+                .nav-tabs a {{ color: #c4c7c5; text-decoration: none; padding: 8px 16px; border-radius: 4px; font-size: 14px; white-space: nowrap; }}
+                .nav-tabs a:hover {{ background: #2d2f38; }}
+                .nav-tabs a.active {{ background: #0b57d0; color: white; font-weight: bold; }}
+                .container {{ max-width: 1400px; margin: 0 auto; padding: 20px; }}
+                .ai-panel {{ margin-top: 30px; border-top: 1px solid #2d2f38; padding-top: 20px; }}
+                .ai-header {{ color: #f9ab00; font-weight: bold; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }}
+            </style>
+        </head>
+        <body>
+            <div class="nav-tabs">
+                {''.join([f'<a href="{cfg["filename"]}" class="{"active" if k == key else ""}">{cfg["name"]}</a>' for k, cfg in ASSET_CONFIG.items()])}
+                <a href="gex_trading_guide.html" style="margin-left:auto; color: #f9ab00;">■ 取引マニュアル</a>
+            </div>
+            <div class="container">
+                {graph_html}
+                <div class="ai-panel">
+                    <div class="ai-header">● DAILY QUANT INSIGHT (Powered by Gemini AI)</div>
+                    {ai_html}
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        with open(DOCS_DIR / config['filename'], "w", encoding="utf-8") as f:
+            f.write(html_content)
+            
+        print(f"[+] Successfully saved {config['filename']}")
 
 if __name__ == "__main__":
     main()
