@@ -43,18 +43,30 @@ def parse_strike(val):
     except:
         return 0.0
 
-def load_barchart_csv(prefix_pattern):
-    sb_files = sorted(glob.glob(f"{prefix_pattern}side-by-side*.csv"))
-    gk_files = sorted(glob.glob(f"{prefix_pattern}volatility-greeks*.csv"))
+def load_barchart_csv(asset_key):
+    """
+    Barchartのファイル命名規則の揺れを吸収するため、
+    先頭のティッカー部分(esu*, si*等)のみで柔軟にファイル検索を行う
+    """
+    prefix = "esu" if asset_key == "ES" else asset_key.lower()
+    
+    # ワイルドカードを活用して確実にキャッチ
+    sb_files = sorted(glob.glob(f"{prefix}*side-by-side*.csv"))
+    gk_files = sorted(glob.glob(f"{prefix}*volatility-greeks*.csv"))
+    
     if not sb_files or not gk_files:
-        return None, None, None
+        return None, None, None, "Unknown"
         
     sb_path = sb_files[-1]
     gk_path = gk_files[-1]
     
-    # ファイル名から日付を抽出 (例: ...-07-11-2026.csv)
+    # ファイル名から取得日を抽出 (例: ...-07-11-2026.csv)
     date_match = re.search(r'-(\d{2}-\d{2}-\d{4})\.csv$', sb_path)
     file_date = date_match.group(1) if date_match else "Unknown"
+    
+    # ファイル名から限月(Expiry)を抽出
+    expiry_match = re.search(r'-exp-(.*?)-show', sb_path)
+    expiry_str = expiry_match.group(1) if expiry_match else "Unknown"
     
     df_sb = pd.read_csv(sb_path)
     df_gk = pd.read_csv(gk_path)
@@ -64,7 +76,7 @@ def load_barchart_csv(prefix_pattern):
     df_sb['Strike'] = df_sb['Strike'].apply(parse_strike)
     df_gk['Strike'] = df_gk['Strike'].apply(parse_strike)
     
-    return df_sb, df_gk, file_date
+    return df_sb, df_gk, file_date, expiry_str
 
 def generate_ai_insight(asset_name, spot_price, zero_gamma, call_wall, put_wall, regime):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -89,16 +101,16 @@ def generate_ai_insight(asset_name, spot_price, zero_gamma, call_wall, put_wall,
     現在の重力場から読み取れる「具体的なエントリー/エグジット/撤退の目安」だけを、プロフェッショナルなトーンで出力せよ。
     """
     
-    target_model = None
     try:
-        # Canary Radar v12.3 実績のモデル探索ロジック
+        # Canary Radar実績の動的モデル探索（高速なFlashを優先）
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         preferred_order = [
-            "models/gemini-1.5-flash", "models/gemini-1.5-flash-latest", 
-            "models/gemini-1.5-pro", "models/gemini-1.5-pro-latest", 
+            "models/gemini-1.5-flash-latest", "models/gemini-1.5-flash",
+            "models/gemini-1.5-pro-latest", "models/gemini-1.5-pro", 
             "models/gemini-pro"
         ]
         
+        target_model = None
         for pref in preferred_order:
             if pref in available_models:
                 target_model = pref.replace("models/", "")
@@ -110,22 +122,21 @@ def generate_ai_insight(asset_name, spot_price, zero_gamma, call_wall, put_wall,
         if not target_model:
             return "<p style='color: #ff4444;'>[エラー] 利用可能なGeminiモデルが見つかりません。</p>"
 
-        model = genai.GenerativeModel(model_name=target_model)
-        
-        # 7銘柄連続アクセスによる 429 Too Many Requests (レートリミット) 回避
+        # レートリミット回避のための待機
         time.sleep(3)
         
+        print(f"[*] Dynamic Model Discovery: AI Core '{target_model}' Engaged for {asset_name}.")
+        model = genai.GenerativeModel(model_name=target_model)
         response = model.generate_content(prompt)
         return response.text
         
     except Exception as e:
         trace = traceback.format_exc()
-        return f"<p style='color: #ff4444;'>[エラー] AIインサイト生成に失敗しました (Model: {target_model})<br>詳細: {e}</p><!--\n{trace}\n-->"
+        return f"<p style='color: #ff4444;'>[重大なエラー] AIインサイト生成に失敗しました (Model: {target_model})<br>詳細: {e}</p><!--\n{trace}\n-->"
 
 def process_asset(asset_key, config):
     print(f"[*] Processing {config['name']}...")
-    prefix_pattern = f"{asset_key.lower()}*-options-exp-*" if asset_key != "ES" else "esu*-options-monthly-options-exp-*"
-    df_sb, df_gk, file_date = load_barchart_csv(prefix_pattern)
+    df_sb, df_gk, file_date, expiry_str = load_barchart_csv(asset_key)
     
     if df_sb is None or df_gk is None:
         print(f"[!] Data not found for {asset_key}. Skipping.")
@@ -183,7 +194,6 @@ def process_asset(asset_key, config):
         regime = "🔴 NEGATIVE GAMMA REGIME (パニック売り警戒)"
         regime_color = "#FF3333"
 
-    # AIインサイト生成
     print(f"[*] Generating AI Insight for {config['name']}...")
     ai_insight_html = generate_ai_insight(
         asset_name=config['name'],
@@ -231,16 +241,6 @@ def process_asset(asset_key, config):
         name="IV", mode='lines+markers', line=dict(color='orange', width=2)
     ), row=2, col=1)
 
-    # Layout
-    expiry_match = re.search(r'-exp-(.*?)-show', prefix_pattern) if asset_key != "ES" else re.search(r'-exp-(.*?)-show', prefix_pattern)
-    # 実際のファイル名から抽出する方が安全
-    sb_files = sorted(glob.glob(f"{prefix_pattern}side-by-side*.csv"))
-    expiry_str = "Unknown"
-    if sb_files:
-        em = re.search(r'-exp-(.*?)-show', sb_files[-1])
-        if em:
-            expiry_str = em.group(1)
-
     fig.update_layout(
         title=f"Quant Options Radar: {config['name']} | Expiry: {expiry_str}<br><span style='font-size:12px;color:gray;'>As of: {file_date}</span>",
         template="plotly_dark",
@@ -254,20 +254,17 @@ def process_asset(asset_key, config):
     fig.update_yaxes(title_text="IV (%)", row=2, col=1)
     fig.update_xaxes(title_text="Strike Price", row=2, col=1)
 
-    # Responsive configuration
     config_plotly = {'responsive': True, 'displayModeBar': False}
     plot_html = fig.to_html(full_html=False, include_plotlyjs='cdn', config=config_plotly)
 
     return plot_html, ai_insight_html
 
 def generate_html(asset_key, config, plot_html, ai_insight_html):
-    # タブナビゲーションの生成
     tabs_html = ""
     for k, v in ASSET_CONFIG.items():
         active = "active" if k == asset_key else ""
         tabs_html += f'<a href="{v["filename"]}" class="tab {active}">{v["name"]}</a>'
     
-    # AIインサイトパネルのスタイル（Canary Radar風）
     insight_panel = f"""
     <div class="ai-insight-panel">
         <h3 style="color: #ff9900; margin-top: 0; font-size: 16px; border-bottom: 1px solid #ff9900; padding-bottom: 8px;">
@@ -294,7 +291,6 @@ def generate_html(asset_key, config, plot_html, ai_insight_html):
             .nav a.active {{ background-color: #0055ff; color: white; font-weight: bold; }}
             .container {{ padding: 20px; max-width: 1600px; margin: 0 auto; }}
             .chart-container {{ width: 100%; min-height: 850px; }}
-            /* AIインサイトパネルのスタイル */
             .ai-insight-panel {{
                 background-color: #1a1a1a;
                 border-left: 4px solid #ff9900;
@@ -304,7 +300,6 @@ def generate_html(asset_key, config, plot_html, ai_insight_html):
                 max-width: 1500px;
                 box-shadow: 0 4px 6px rgba(0,0,0,0.3);
             }}
-            /* Markdownの箇条書きや見出しを綺麗に見せる */
             .ai-insight-panel p {{ margin-bottom: 10px; }}
             .ai-insight-panel ul {{ margin-top: 0; padding-left: 20px; }}
             .ai-insight-panel li {{ margin-bottom: 5px; }}
@@ -340,7 +335,6 @@ def generate_html(asset_key, config, plot_html, ai_insight_html):
 def main():
     DOCS_DIR.mkdir(exist_ok=True)
     
-    # .nojekyll の生成 (GitHub Pages 対策)
     with open(DOCS_DIR / ".nojekyll", "w") as f:
         pass
 
