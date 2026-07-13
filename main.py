@@ -6,13 +6,11 @@ import pandas as pd
 import numpy as np
 import re
 from pathlib import Path
-from scipy.stats import norm
 import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import google.generativeai as genai
 
-# パス定義
 ROOT_DIR = Path(__file__).parent.resolve()
 DOCS_DIR = ROOT_DIR / "docs"
 
@@ -43,14 +41,23 @@ def parse_strike(val):
     except:
         return 0.0
 
+def get_col_data(df, primary_name, secondary_name):
+    """
+    Pandasのマージ仕様変更に強い、安全なカラム抽出ヘルパー。
+    存在すればそのSeriesを返し、無ければゼロ埋めのSeriesを返す。
+    """
+    if primary_name in df.columns:
+        return df[primary_name]
+    if secondary_name in df.columns:
+        return df[secondary_name]
+    return pd.Series([0.0] * len(df))
+
 def load_barchart_csv(asset_key):
     """
-    Barchartのファイル命名規則の揺れを吸収するため、
-    先頭のティッカー部分(esu*, si*等)のみで柔軟にファイル検索を行う
+    Barchartのファイル名揺れを吸収するため、シンプルに先頭一致とキーワードで検索
     """
     prefix = "esu" if asset_key == "ES" else asset_key.lower()
     
-    # ワイルドカードを活用して確実にキャッチ
     sb_files = sorted(glob.glob(f"{prefix}*side-by-side*.csv"))
     gk_files = sorted(glob.glob(f"{prefix}*volatility-greeks*.csv"))
     
@@ -60,11 +67,9 @@ def load_barchart_csv(asset_key):
     sb_path = sb_files[-1]
     gk_path = gk_files[-1]
     
-    # ファイル名から取得日を抽出 (例: ...-07-11-2026.csv)
     date_match = re.search(r'-(\d{2}-\d{2}-\d{4})\.csv$', sb_path)
     file_date = date_match.group(1) if date_match else "Unknown"
     
-    # ファイル名から限月(Expiry)を抽出
     expiry_match = re.search(r'-exp-(.*?)-show', sb_path)
     expiry_str = expiry_match.group(1) if expiry_match else "Unknown"
     
@@ -101,8 +106,8 @@ def generate_ai_insight(asset_name, spot_price, zero_gamma, call_wall, put_wall,
     現在の重力場から読み取れる「具体的なエントリー/エグジット/撤退の目安」だけを、プロフェッショナルなトーンで出力せよ。
     """
     
+    # 動的モデル探索とフォールバック・カスケード（Canary Radar仕様）
     try:
-        # Canary Radar実績の動的モデル探索（高速なFlashを優先）
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         preferred_order = [
             "models/gemini-1.5-flash-latest", "models/gemini-1.5-flash",
@@ -122,9 +127,8 @@ def generate_ai_insight(asset_name, spot_price, zero_gamma, call_wall, put_wall,
         if not target_model:
             return "<p style='color: #ff4444;'>[エラー] 利用可能なGeminiモデルが見つかりません。</p>"
 
-        # レートリミット回避のための待機
+        # レートリミット回避のためのスリープ
         time.sleep(3)
-        
         print(f"[*] Dynamic Model Discovery: AI Core '{target_model}' Engaged for {asset_name}.")
         model = genai.GenerativeModel(model_name=target_model)
         response = model.generate_content(prompt)
@@ -144,7 +148,7 @@ def process_asset(asset_key, config):
         
     df = pd.merge(df_sb, df_gk, on='Strike', how='inner')
     
-    # 週末データ欠落対策：過去5日分のデータから最新の終値を取得
+    # 週末データ欠落対策：過去5日分から最新値を取得
     try:
         ticker = yf.Ticker(config['ticker'])
         hist = ticker.history(period="5d")
@@ -152,15 +156,16 @@ def process_asset(asset_key, config):
             raise ValueError("No price data found in 5d history")
         spot_price = float(hist['Close'].iloc[-1])
     except Exception as e:
-        print(f"[!] Warning: yfinance failed to fetch {config['ticker']}. Using approx from Strikes. Error: {e}")
+        print(f"[!] Warning: yfinance failed to fetch {config['ticker']}. Using approx. Error: {e}")
         spot_price = df['Strike'].median()
 
-    df['Call_OpenInt'] = df['Open Int_x'].apply(clean_val)
-    df['Put_OpenInt'] = df['Open Int_y'].apply(clean_val)
-    df['Call_Gamma'] = df['Gamma_x'].apply(clean_val)
-    df['Put_Gamma'] = df['Gamma_y'].apply(clean_val)
-    df['Call_IV'] = df['IV_x'].apply(clean_val)
-    df['Put_IV'] = df['IV_y'].apply(clean_val)
+    # Pandasマージ仕様のブレに強いカラム抽出
+    df['Call_OpenInt'] = get_col_data(df, 'Open Int', 'Open Int_x').apply(clean_val)
+    df['Put_OpenInt'] = get_col_data(df, 'Open Int.1', 'Open Int_y').apply(clean_val)
+    df['Call_Gamma'] = get_col_data(df, 'Gamma', 'Gamma_x').apply(clean_val)
+    df['Put_Gamma'] = get_col_data(df, 'Gamma.1', 'Gamma_y').apply(clean_val)
+    df['Call_IV'] = get_col_data(df, 'IV', 'IV_x').apply(clean_val)
+    df['Put_IV'] = get_col_data(df, 'IV.1', 'IV_y').apply(clean_val)
     
     df['Call_GEX'] = df['Call_Gamma'] * df['Call_OpenInt'] * 100 * spot_price * spot_price * 0.01 * config['multiplier']
     df['Put_GEX'] = df['Put_Gamma'] * df['Put_OpenInt'] * 100 * spot_price * spot_price * 0.01 * config['multiplier'] * -1
@@ -171,7 +176,6 @@ def process_asset(asset_key, config):
     df['Total_GEX_M'] = df['Total_GEX'] / 1e6
     df['Avg_IV'] = (df['Call_IV'] + df['Put_IV']) / 2
     
-    # 有効なStrike範囲に絞り込み
     mask = (df['Call_GEX'] > 0) | (df['Put_GEX'] < 0)
     if not mask.any():
         return None
@@ -181,7 +185,9 @@ def process_asset(asset_key, config):
     margin = (max_strike - min_strike) * 0.1
     df_filtered = df[(df['Strike'] >= min_strike - margin) & (df['Strike'] <= max_strike + margin)].copy()
 
-    # Zero-Gamma, Call/Put Wall
+    if df_filtered.empty:
+        return None
+
     zero_gamma_idx = df_filtered['Total_GEX'].abs().idxmin()
     zero_gamma_strike = df_filtered.loc[zero_gamma_idx, 'Strike']
     call_wall_strike = df_filtered.loc[df_filtered['Call_GEX'].idxmax(), 'Strike']
@@ -201,41 +207,36 @@ def process_asset(asset_key, config):
         zero_gamma=zero_gamma_strike,
         call_wall=call_wall_strike,
         put_wall=put_wall_strike,
-        regime=regime.split(" ")[0] + " " + regime.split(" ")[1] # 簡略化
+        regime=regime.split(" ")[0] + " " + regime.split(" ")[1]
     )
 
+    # チャート描画
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                         row_heights=[0.7, 0.3], vertical_spacing=0.05,
                         subplot_titles=(f"Dealer Net GEX Profile<br><span style='color:{regime_color}; font-size:16px;'>{regime}</span>", "Implied Volatility Smile"))
 
-    # Call GEX
     fig.add_trace(go.Bar(
         x=df_filtered['Strike'], y=df_filtered['Call_GEX_M'],
         name="Call GEX (レジスタンス)", marker_color="#00FFFF", opacity=0.8
     ), row=1, col=1)
 
-    # Put GEX
     fig.add_trace(go.Bar(
         x=df_filtered['Strike'], y=df_filtered['Put_GEX_M'],
         name="Put GEX (サポート)", marker_color="#FF00FF", opacity=0.8
     ), row=1, col=1)
 
-    # Net GEX
     fig.add_trace(go.Scatter(
         x=df_filtered['Strike'], y=df_filtered['Total_GEX_M'],
         name="Net GEX", mode='lines+markers',
         line=dict(color='white', width=2), marker=dict(size=4)
     ), row=1, col=1)
 
-    # Spot Price
     fig.add_vline(x=spot_price, line_width=2, line_dash="solid", line_color="yellow", row=1, col=1)
     fig.add_annotation(x=spot_price, y=-0.1, xref="x", yref="y domain", text=f"Current Spot<br>{spot_price}", showarrow=True, arrowhead=2, ax=0, ay=30, bgcolor="yellow", font=dict(color="black"), row=1, col=1)
 
-    # Zero Gamma
     fig.add_vline(x=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="red", row=1, col=1)
     fig.add_annotation(x=zero_gamma_strike, y=0.95, xref="x", yref="y domain", text=f"Zero-Gamma<br>{zero_gamma_strike}", showarrow=True, arrowhead=2, ax=-40, ay=-30, bgcolor="red", font=dict(color="white"), row=1, col=1)
 
-    # IV Smile
     fig.add_trace(go.Scatter(
         x=df_filtered['Strike'], y=df_filtered['Avg_IV'],
         name="IV", mode='lines+markers', line=dict(color='orange', width=2)
@@ -243,10 +244,7 @@ def process_asset(asset_key, config):
 
     fig.update_layout(
         title=f"Quant Options Radar: {config['name']} | Expiry: {expiry_str}<br><span style='font-size:12px;color:gray;'>As of: {file_date}</span>",
-        template="plotly_dark",
-        barmode='relative',
-        hovermode="x unified",
-        height=850,
+        template="plotly_dark", barmode='relative', hovermode="x unified", height=850,
         margin=dict(l=50, r=50, t=100, b=50),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
@@ -292,13 +290,8 @@ def generate_html(asset_key, config, plot_html, ai_insight_html):
             .container {{ padding: 20px; max-width: 1600px; margin: 0 auto; }}
             .chart-container {{ width: 100%; min-height: 850px; }}
             .ai-insight-panel {{
-                background-color: #1a1a1a;
-                border-left: 4px solid #ff9900;
-                border-radius: 4px;
-                padding: 20px;
-                margin: 20px auto;
-                max-width: 1500px;
-                box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+                background-color: #1a1a1a; border-left: 4px solid #ff9900; border-radius: 4px;
+                padding: 20px; margin: 20px auto; max-width: 1500px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
             }}
             .ai-insight-panel p {{ margin-bottom: 10px; }}
             .ai-insight-panel ul {{ margin-top: 0; padding-left: 20px; }}
