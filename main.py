@@ -28,8 +28,6 @@ ASSET_CONFIG = {
     "ZW": {"name": "小麦 (ZW)", "ticker": "ZW=F", "multiplier": 50, "filename": "zw.html"}
 }
 
-AVAILABLE_AI_MODEL = None
-
 # ==========================================
 # ヘルパー関数
 # ==========================================
@@ -51,7 +49,7 @@ def clean_val(val):
 
 def load_barchart_csv(asset_key):
     prefix = asset_key.lower()
-    # プレフィックスとキーワードのみで柔軟にファイル検索
+    # プレフィックスとキーワードのみで確実にファイルをキャッチ
     sb_files = sorted(glob.glob(f"{prefix}*side-by-side*.csv"))
     gk_files = sorted(glob.glob(f"{prefix}*volatility-greeks*.csv"))
     
@@ -70,39 +68,15 @@ def load_barchart_csv(asset_key):
     return df_sb, df_gk, expiry
 
 # ==========================================
-# AI インサイト生成 (動的モデル探索 & スナイプ)
+# AI インサイト生成 (完全ハードコード版)
 # ==========================================
 def get_best_ai_model():
-    global AVAILABLE_AI_MODEL
-    if AVAILABLE_AI_MODEL:
-        return AVAILABLE_AI_MODEL
-        
-    try:
-        # 利用可能なモデルを動的取得
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # 2.5-flash (20回制限) や高コストモデルを避け、1.5-flash (1500回制限) を優先的にスナイプ
-        preferred_patterns = [
-            "models/gemini-1.5-flash", "gemini-1.5-flash", 
-            "models/gemini-1.5-flash-8b", "gemini-1.5-flash-8b",
-            "models/gemini-1.5-pro", "gemini-1.5-pro"
-        ]
-        
-        for pattern in preferred_patterns:
-            if pattern in available_models:
-                AVAILABLE_AI_MODEL = pattern
-                print(f"[*] AI Model Selected: {AVAILABLE_AI_MODEL}")
-                break
-                
-        # 見つからなかった場合のフォールバック
-        if not AVAILABLE_AI_MODEL and available_models:
-            AVAILABLE_AI_MODEL = available_models[0]
-            print(f"[*] AI Model Fallback: {AVAILABLE_AI_MODEL}")
-            
-        return AVAILABLE_AI_MODEL
-    except Exception as e:
-        print(f"[!] Error fetching models: {e}")
-        return "gemini-1.5-flash" # 最終フォールバック
+    # 動的探索(list_models)は、Google側の仕様変更により2.5-flash(1日20回制限)を
+    # 誤って取得してしまうリスクがあるため完全に廃止。
+    # 無料枠(1500回/日)が確約されている 'gemini-1.5-flash' をハードコードする。
+    target_model = "gemini-1.5-flash"
+    print(f"[*] AI Model Hardcoded: {target_model}")
+    return target_model
 
 def generate_ai_insight(asset_name, spot, call_wall, put_wall, zero_gamma, regime):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -113,7 +87,7 @@ def generate_ai_insight(asset_name, spot, call_wall, put_wall, zero_gamma, regim
     
     prompt = f"""
 あなたは冷徹で論理的なクオンツ・アナリストです。以下のデータに基づき、指定したHTMLフォーマットにのみ従って作戦指令を出力してください。
-Markdownのコードブロック（```html等）や、挨拶、追加の説明は絶対に含めないでください。デザインやHTML構造の改変は一切禁止します。
+Markdownのコードブロック（```html 等）や、挨拶、追加の説明は絶対に含めないでください。デザインやHTML構造の改変は一切禁止します。
 
 データ:
 銘柄: {asset_name}
@@ -145,9 +119,6 @@ Zero-Gamma: {zero_gamma}
 """
     try:
         target_model_name = get_best_ai_model()
-        if not target_model_name:
-            return "<p style='color:red;'>[エラー] 利用可能なAIモデルが見つかりません。</p>"
-
         model = genai.GenerativeModel(model_name=target_model_name)
         
         last_error = "None"
@@ -161,7 +132,7 @@ Zero-Gamma: {zero_gamma}
                 last_error = str(e)
                 if "429" in last_error or "Quota" in last_error:
                     print(f"[*] API Limit/Quota Hit on {target_model_name}. Waiting 60s... (Attempt {attempt+1})")
-                    time.sleep(60) # 429を踏んだら1分寝て再アタック（スマートリトライ）
+                    time.sleep(60) # 429を踏んだら1分寝て再アタック
                 else:
                     print(f"[-] Model {target_model_name} failed: {last_error}")
                     time.sleep(2)
@@ -186,8 +157,7 @@ def process_asset(asset_key, config):
     df_sb['Strike'] = df_sb['Strike'].apply(parse_strike)
     df_gk['Strike'] = df_gk['Strike'].apply(parse_strike)
     
-    # --- 安全な列抽出と集約マージ (duplicate labels 回避) ---
-    
+    # --- 安全な列抽出 (duplicate labels 回避) ---
     # 1. Side-by-Side から Open Interest を抽出
     oi_cols = [c for c in df_sb.columns if 'Open Int' in c or 'OI' in c]
     if len(oi_cols) >= 2:
@@ -273,12 +243,12 @@ def process_asset(asset_key, config):
     # --- Zero-Gamma 算出 (線形補間) ---
     df_sorted = df_filtered.sort_values('Strike').reset_index(drop=True)
     df_sorted['Total_OI'] = df_sorted['Call_OpenInt'] + df_sorted['Put_OpenInt']
-    valid_mask = df_sorted['Total_OI'] > df_sorted['Total_OI'].max() * 0.05 # 流動性ノイズの排除
+    valid_mask = df_sorted['Total_OI'] > df_sorted['Total_OI'].max() * 0.05 
     df_valid = df_sorted[valid_mask].reset_index(drop=True)
     
     if not df_valid.empty:
         signs = np.sign(df_valid['Total_GEX'])
-        flips = np.where(np.diff(signs) != 0)[0] # 符号反転の特定
+        flips = np.where(np.diff(signs) != 0)[0] 
         
         if len(flips) > 0:
             closest_flip_strike = None
