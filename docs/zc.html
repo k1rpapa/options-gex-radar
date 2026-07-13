@@ -1,167 +1,57 @@
-<html>
-<head>
 
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <style>
-        body { margin: 0; background-color: #111; font-family: sans-serif; overflow-x: hidden; }
-        .nav-bar {
-            padding: 10px; background-color: #111; text-align: center; 
-            border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 9999;
-        }
-        .nav-bar a { margin: 0 10px; text-decoration: none; font-weight: bold; font-size: 15px; display: inline-block; padding: 5px; }
-        .mobile-notice {
-            display: none; background-color: #2c3e50; color: #f1c40f; 
-            text-align: center; padding: 8px; font-size: 13px; font-weight: bold;
-        }
-        .chart-scroll-container {
-            width: 100%;
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-        }
-        .chart-wrapper {
-            width: 100%;
-            min-width: 1100px;
-            margin: 0 auto;
-        }
-        /* --- AIパネルのデザイン --- */
-        .ai-panel-container {
-            width: 100%;
-            max-width: 1200px;
-            margin: 0 auto 40px auto;
-            padding: 0 15px;
-            box-sizing: border-box;
-        }
-        .ai-panel {
-            background-color: #1a1a1a;
-            border-left: 4px solid #f9ab00;
-            border-top: 1px solid #333;
-            border-right: 1px solid #333;
-            border-bottom: 1px solid #333;
-            border-radius: 4px;
-            padding: 20px;
-            color: #dcdcdc;
-            font-family: 'Helvetica Neue', Arial, sans-serif;
-            line-height: 1.6;
-        }
-        .ai-panel-header {
-            color: #f9ab00;
-            font-size: 14px;
-            font-weight: bold;
-            letter-spacing: 1px;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-        }
-        .ai-panel-header span { margin-right: 8px; }
-        .ai-panel h3 { color: #fff; margin-top: 20px; font-size: 16px; border-bottom: 1px dotted #444; padding-bottom: 5px; }
-        .ai-panel ul { padding-left: 20px; }
-        .ai-panel li { margin-bottom: 8px; font-size: 14px; }
-        
-        @media screen and (max-width: 800px) {
-            .mobile-notice { display: block; }
-            .nav-bar a { font-size: 12px; margin: 0 3px; }
-            .ai-panel { padding: 15px; }
-        }
-    </style>
-    <meta charset="utf-8" /></head>
-
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Quant Options Radar - コーン先物 (ZC)</title>
+        <style>
+            body { background-color: #111111; color: white; font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 0; overflow-x: hidden; }
+            .nav-bar { display: flex; flex-wrap: wrap; background-color: #000; padding: 10px; border-bottom: 1px solid #333; }
+            .nav-bar a { color: #ccc; text-decoration: none; padding: 8px 15px; margin: 5px; border-radius: 4px; font-size: 14px; font-weight: bold; background-color: #222; transition: all 0.2s; }
+            .nav-bar a:hover { background-color: #444; color: white; }
+            .active-nav { border: 1px solid #fff; }
+            .chart-container { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            .chart-inner { min-width: 800px; }
+            .mobile-notice { display: none; text-align: center; font-size: 12px; color: #888; padding: 5px; }
+            .insight-panel { margin: 20px auto; max-width: 1200px; padding: 20px; background-color: #1a1a1a; border-left: 4px solid #FFA500; border-radius: 4px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+            .insight-title { color: #FFA500; font-size: 16px; font-weight: bold; margin-bottom: 15px; display: flex; align-items: center; }
+            .insight-title span { margin-right: 10px; font-size: 20px; }
+            .insight-content { line-height: 1.6; font-size: 14px; }
+            .insight-content h3 { color: #ddd; font-size: 15px; border-bottom: 1px solid #333; padding-bottom: 5px; margin-top: 15px; }
+            .insight-content ul { padding-left: 20px; }
+            .insight-content li { margin-bottom: 8px; }
+            @media (max-width: 768px) {
+                .mobile-notice { display: block; }
+                .nav-bar { justify-content: center; }
+                .insight-panel { margin: 10px; padding: 15px; }
+            }
+        </style>
+    </head>
     <body>
     <div class="nav-bar">
-        <a href="index.html" style="color: #00FFFF;">🪙 Silver (SI)</a>
-        <a href="ng.html" style="color: #FF00FF;">🔥 Natural Gas (NG)</a>
-        <a href="hg.html" style="color: #FF8C00;">🥉 Copper (HG)</a>
-        <a href="zs.html" style="color: #32CD32;">🌱 Soybeans (ZS)</a>
-        <a href="zc.html" style="color: #FFD700;">🌽 Corn (ZC)</a>
-        <a href="zw.html" style="color: #DAA520;">🌾 Wheat (ZW)</a>
+        <a href="es.html" style="color: #00BFFF;" >📈 S&P 500 (ES)</a>
+        <a href="index.html" style="color: #00FFFF;" >🪙 Silver (SI)</a>
+        <a href="ng.html" style="color: #FF00FF;" >🔥 Natural Gas (NG)</a>
+        <a href="hg.html" style="color: #FF8C00;" >🥉 Copper (HG)</a>
+        <a href="zs.html" style="color: #32CD32;" >🌱 Soybeans (ZS)</a>
+        <a href="zc.html" style="color: #FFD700;" class="active-nav">🌽 Corn (ZC)</a>
+        <a href="zw.html" style="color: #DAA520;" >🌾 Wheat (ZW)</a>
         <a href="gex_trading_guide.html" style="color: #FFFF00;">📖 Trading Manual</a>
     </div>
     <div class="mobile-notice">📱 グラフを左右にスワイプして詳細を確認できます</div>
-    <div class="chart-scroll-container">
-        <div class="chart-wrapper">
-    
-    <div style="height:850px; width:100%;">                        <script>window.PlotlyConfig = {MathJaxConfig: 'local'};</script>
-        <script charset="utf-8" src="https://cdn.plot.ly/plotly-3.7.0.min.js" integrity="sha256-jvTGqxNp8AGWEcvNLVuKr+8j5dGe9Yw51LQkmDH+IYA=" crossorigin="anonymous"></script>                <div id="fd7dba45-6d5d-4105-a2b0-c18aeaed4214" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("fd7dba45-6d5d-4105-a2b0-c18aeaed4214")) {                    Plotly.newPlot(                        "fd7dba45-6d5d-4105-a2b0-c18aeaed4214",                        [{"marker":{"color":"rgba(0, 255, 255, 0.7)"},"name":"Call GEX (\u30ec\u30b8\u30b9\u30bf\u30f3\u30b9)","x":{"dtype":"f8","bdata":"AAAAAABwgkAAAAAAAEiCQAAAAAAAIIJAAAAAAAD4gUAAAAAAANCBQAAAAAAAqIFAAAAAAACAgUAAAAAAAFiBQAAAAAAAMIFAAAAAAAAIgUAAAAAAAOCAQAAAAAAAuIBAAAAAAACQgEAAAAAAAGiAQAAAAAAAQIBAAAAAAAAYgEAAAAAAAOB\u002fQAAAAAAAkH9AAAAAAABAf0AAAAAAAPB+QAAAAAAAoH5AAAAAAABQfkAAAAAAAAB+QAAAAAAAsH1AAAAAAABgfUAAAAAAABB9QAAAAAAAwHxAAAAAAABwfEAAAAAAACB8QAAAAAAA0HtAAAAAAACAe0AAAAAAADB7QAAAAAAA4HpAAAAAAACQekAAAAAAAEB6QAAAAAAA8HlAAAAAAACgeUAAAAAAAFB5QAAAAAAAAHlAAAAAAACweEAAAAAAAGB4QAAAAAAAEHhAAAAAAADAd0AAAAAAAHB3QAAAAAAAIHdAAAAAAADQdkAAAAAAAIB2QAAAAAAAMHZAAAAAAADgdUAAAAAAAJB1QAAAAAAAQHVAAAAAAADwdEAAAAAAAKB0QA=="},"y":{"dtype":"f8","bdata":"p3DNd1F5RD8aomWEnbj1Plg5bxSXJlY\u002f03bnpYoV\u002fT6NP0V+3jVQPwGy6QM2TwE\u002fFZUnbJrkWD9bPO6bP7Y7PxALL\u002fn9T5E\u002fU3kTeb5BYz\u002fCK3oi\u002f6RtP+Z9masdczo\u002fATdVxdRlbz+GL4gd4R9gP8iAyaPKdos\u002funhar7qbeD+Z8yzfdYSQP\u002fIoAaoRXnU\u002fLW+jnj5FqT\u002fqDPI\u002fcNqDPwwYZVXgM4o\u002fC67a810hkj+nJl+RX56gPzyWG5n294k\u002f6Iu58dfypz+ZXTk\u002fHiqJP20IMWOOQak\u002fy1KuBsPtjz8NOeUq1YW6P650JQOACH8\u002fPWz\u002f5gOwmT82Y798A4eAP3uI3jl1X4U\u002fHuOyj68Wgz8EJL\u002fns6h2P38kVHDIhkc\u002fJyHwdBnxRz8lQZauv5cIP8h9UhCohx8\u002fydPE2L1c6T4gBUn9kVDePi67L+Bb+r8+kf1H11A+sD5s2HwK4eKmPqUFF+P7tZ4+ExZR5yoPbT4n+Ln1j8FuPjBGttmM3EE+zHMSzRe0ST740RqDULFBPgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="},"type":"bar","xaxis":"x","yaxis":"y"},{"marker":{"color":"rgba(255, 0, 255, 0.7)"},"name":"Put GEX (\u30b5\u30dd\u30fc\u30c8)","x":{"dtype":"f8","bdata":"AAAAAABwgkAAAAAAAEiCQAAAAAAAIIJAAAAAAAD4gUAAAAAAANCBQAAAAAAAqIFAAAAAAACAgUAAAAAAAFiBQAAAAAAAMIFAAAAAAAAIgUAAAAAAAOCAQAAAAAAAuIBAAAAAAACQgEAAAAAAAGiAQAAAAAAAQIBAAAAAAAAYgEAAAAAAAOB\u002fQAAAAAAAkH9AAAAAAABAf0AAAAAAAPB+QAAAAAAAoH5AAAAAAABQfkAAAAAAAAB+QAAAAAAAsH1AAAAAAABgfUAAAAAAABB9QAAAAAAAwHxAAAAAAABwfEAAAAAAACB8QAAAAAAA0HtAAAAAAACAe0AAAAAAADB7QAAAAAAA4HpAAAAAAACQekAAAAAAAEB6QAAAAAAA8HlAAAAAAACgeUAAAAAAAFB5QAAAAAAAAHlAAAAAAACweEAAAAAAAGB4QAAAAAAAEHhAAAAAAADAd0AAAAAAAHB3QAAAAAAAIHdAAAAAAADQdkAAAAAAAIB2QAAAAAAAMHZAAAAAAADgdUAAAAAAAJB1QAAAAAAAQHVAAAAAAADwdEAAAAAAAKB0QA=="},"y":{"dtype":"f8","bdata":"Uzcc90mhpL4AAAAAAAAAgD8xZgAgWsS+AAAAAAAAAIDUPTafwmPQvgAAAAAAAACAoIYaUlHo1L5t17FgtTyyvhkQvfMzWay+DhpvkT0lr74AAAAAAAAAgPiSbyy0AMq+bqnYe1cbQL9d3ptZWnwEvwjAfE8NzRq\u002foxaB8d3iJL+eE5vnvFMxv9GYk0TmUTK\u002frSEnPSD6Sr9UN4oHo9UsvwwPlmNmgme\u002fNl+dEJWqhr+Z7GQFI\u002fGGv20bBlyG6YS\u002fXBmc5Olwlb+MNQVsyUJ1v3BuWaOA26C\u002f3GrSvuZshL+N0j3YOoyhv21USAN3YHu\u002fBhrPoMsAk78oI2DxZqZ9v+ElrFJtPJ+\u002f\u002fGH+hzQ+kL8c7v6OoTOJv2LfZ66Mf2m\u002fniBanph4er+TojvIRQJTv+7At8J5pm6\u002fMbb763tZRr8XKEN3UFZMvxfMYSEOHyi\u002fWob8DFGVOr97wYzA1w0Uv3tfFauPtRK\u002fGuMo6uBrzr4+quir7O7pvuyuq5P+Ncu+PDNEfjc79b4zlQvVIsBsvlulvuF\u002fyKa+l41Vm\u002fiMh750InvHH7Ogvg=="},"type":"bar","xaxis":"x","yaxis":"y"},{"line":{"color":"white","width":2},"mode":"lines+markers","name":"Net GEX","x":{"dtype":"f8","bdata":"AAAAAABwgkAAAAAAAEiCQAAAAAAAIIJAAAAAAAD4gUAAAAAAANCBQAAAAAAAqIFAAAAAAACAgUAAAAAAAFiBQAAAAAAAMIFAAAAAAAAIgUAAAAAAAOCAQAAAAAAAuIBAAAAAAACQgEAAAAAAAGiAQAAAAAAAQIBAAAAAAAAYgEAAAAAAAOB\u002fQAAAAAAAkH9AAAAAAABAf0AAAAAAAPB+QAAAAAAAoH5AAAAAAABQfkAAAAAAAAB+QAAAAAAAsH1AAAAAAABgfUAAAAAAABB9QAAAAAAAwHxAAAAAAABwfEAAAAAAACB8QAAAAAAA0HtAAAAAAACAe0AAAAAAADB7QAAAAAAA4HpAAAAAAACQekAAAAAAAEB6QAAAAAAA8HlAAAAAAACgeUAAAAAAAFB5QAAAAAAAAHlAAAAAAACweEAAAAAAAGB4QAAAAAAAEHhAAAAAAADAd0AAAAAAAHB3QAAAAAAAIHdAAAAAAADQdkAAAAAAAIB2QAAAAAAAMHZAAAAAAADgdUAAAAAAAJB1QAAAAAAAQHVAAAAAAADwdEAAAAAAAKB0QA=="},"y":{"dtype":"f8","bdata":"malPJSl0RD8aomWEnbj1Pj8GbwRqHFY\u002f03bnpYoV\u002fT5PCaa7eiVQPwGy6QM2TwE\u002fjnrVGrLPWD+Eio3mAqQ7P5Yjx0bFT5E\u002fYWI6Jcw\u002fYz\u002fCK3oi\u002f6RtP8CeQEMcPzo\u002fpgxf5v5eaz8ZgENo35tfP0iHKokwQYs\u002fBXDOv6P0dz9Lh47rJj+QP2Xvt0XzOHQ\u002fptKuHVbZqD8N5NOzGWeDP0mUf7xGU4Q\u002fwPkvrk0wez8C1wugLcSVPzzrVfTAOWQ\u002fdP7W\u002fsV0mj+mhW0ScxF9P\u002fozr38bzJA\u002f3s+3j7gBdz\u002fGT8a+t7+xPwgC6f5HQE0\u002f3EjBGOG8ej8gGvVAAD1LP6ThvLWyjJS\u002ftMGTAHPLer80uD42j757v0LWUpLanWO\u002feRy8b3V6d7+K8MbKhz1SvwAtNYI8qm2\u002f4qKY9Aj0Rb8NlkhTrxlMv6FsoWkZ3ye\u002fXD4lvBKFOr\u002fKx3f+EeATv3VIMq\u002fZlhK\u002fwp6LPqT3zb5G8PIbK9Dpvqb40QYiJMu+7pBK+wA49b614ES0zlNovlulvuF\u002fyKa+l41Vm\u002fiMh750InvHH7Ogvg=="},"type":"scatter","xaxis":"x","yaxis":"y"},{"connectgaps":true,"line":{"color":"orange"},"mode":"lines+markers","name":"IV","x":{"dtype":"f8","bdata":"AAAAAABwgkAAAAAAAEiCQAAAAAAAIIJAAAAAAAD4gUAAAAAAANCBQAAAAAAAqIFAAAAAAACAgUAAAAAAAFiBQAAAAAAAMIFAAAAAAAAIgUAAAAAAAOCAQAAAAAAAuIBAAAAAAACQgEAAAAAAAGiAQAAAAAAAQIBAAAAAAAAYgEAAAAAAAOB\u002fQAAAAAAAkH9AAAAAAABAf0AAAAAAAPB+QAAAAAAAoH5AAAAAAABQfkAAAAAAAAB+QAAAAAAAsH1AAAAAAABgfUAAAAAAABB9QAAAAAAAwHxAAAAAAABwfEAAAAAAACB8QAAAAAAA0HtAAAAAAACAe0AAAAAAADB7QAAAAAAA4HpAAAAAAACQekAAAAAAAEB6QAAAAAAA8HlAAAAAAACgeUAAAAAAAFB5QAAAAAAAAHlAAAAAAACweEAAAAAAAGB4QAAAAAAAEHhAAAAAAADAd0AAAAAAAHB3QAAAAAAAIHdAAAAAAADQdkAAAAAAAIB2QAAAAAAAMHZAAAAAAADgdUAAAAAAAJB1QAAAAAAAQHVAAAAAAADwdEAAAAAAAKB0QA=="},"y":{"dtype":"f8","bdata":"9ihcj8K1RUCuR+F6FN5FQClcj8L1SEVAXI\u002fC9SgMRUBmZmZmZrZEQJqZmZmZGURAhutRuB4FREDC9Shcj2JDQLkehetROENAAAAAAACQQkA0MzMzM1NCQLgehetRCEJA4XoUrkexQUAfhetRuE5BQI\u002fC9ShcL0FAMzMzMzOzQEAAAAAAAHBAQLkehetROEBA9ihcj8LVP0DXo3A9Cnc\u002fQKJwPQrX4z5AFK5H4Xp0PkD1KFyPwvU9QKRwPQrXgz1AMzMzMzMTPUBdj8L1KJw8QBWuR+F6NDxAcT0K16PQO0AL16NwPUo7QArXo3A9CjtA2KNwPQqXOkBbj8L1KDw6QLcehetR2DlAH4XrUbi+OUAfhetRuH45QF2PwvUofDlAhetRuB6FOUDMzMzMzKw5QOJ6FK5H4TlAHoXrUbg+OkDiehSuR2E6QK5H4XoUTjtAkML1KFyPO0Bcj8L1KDw8QM3MzMzMLD1A4HoUrkfhPUAfhetRuD4+QNejcD0KF0BAHoXrUbjeP0CkcD0K1+NAQOtRuB6F20FA9Shcj8LVQkAVrkfhetRDQA=="},"type":"scatter","xaxis":"x2","yaxis":"y2"}],                        {"template":{"data":{"barpolar":[{"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"bar":[{"error_x":{"color":"#f2f5fa"},"error_y":{"color":"#f2f5fa"},"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"carpet":[{"aaxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"baxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"type":"carpet"}],"choropleth":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"choropleth"}],"contourcarpet":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"contourcarpet"}],"contour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"contour"}],"heatmap":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"heatmap"}],"histogram2dcontour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2dcontour"}],"histogram2d":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2d"}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"mesh3d":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"mesh3d"}],"parcoords":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"parcoords"}],"pie":[{"automargin":true,"type":"pie"}],"scatter3d":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatter3d"}],"scattercarpet":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattercarpet"}],"scattergeo":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattergeo"}],"scattergl":[{"marker":{"line":{"color":"#283442"}},"type":"scattergl"}],"scattermapbox":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermapbox"}],"scattermap":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermap"}],"scatterpolargl":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolargl"}],"scatterpolar":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolar"}],"scatter":[{"marker":{"line":{"color":"#283442"}},"type":"scatter"}],"scatterternary":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterternary"}],"surface":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"surface"}],"table":[{"cells":{"fill":{"color":"#506784"},"line":{"color":"rgb(17,17,17)"}},"header":{"fill":{"color":"#2a3f5f"},"line":{"color":"rgb(17,17,17)"}},"type":"table"}]},"layout":{"annotationdefaults":{"arrowcolor":"#f2f5fa","arrowhead":0,"arrowwidth":1},"autotypenumbers":"strict","coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]],"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]},"colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#f2f5fa"},"geo":{"bgcolor":"rgb(17,17,17)","lakecolor":"rgb(17,17,17)","landcolor":"rgb(17,17,17)","showlakes":true,"showland":true,"subunitcolor":"#506784"},"hoverlabel":{"align":"left"},"hovermode":"closest","mapbox":{"style":"dark"},"paper_bgcolor":"rgb(17,17,17)","plot_bgcolor":"rgb(17,17,17)","polar":{"angularaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","radialaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"scene":{"xaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"yaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"zaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"}},"shapedefaults":{"line":{"color":"#f2f5fa"}},"sliderdefaults":{"bgcolor":"#C8D4E3","bordercolor":"rgb(17,17,17)","borderwidth":1,"tickwidth":0},"ternary":{"aaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"baxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","caxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"title":{"x":0.05},"updatemenudefaults":{"bgcolor":"#506784","borderwidth":0},"xaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2},"yaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2}}},"xaxis":{"anchor":"y","domain":[0.0,1.0],"matches":"x2","showticklabels":false},"yaxis":{"anchor":"x","domain":[0.349,0.9999999999999999],"title":{"text":"GEX ($M)"}},"xaxis2":{"anchor":"y2","domain":[0.0,1.0],"title":{"text":"Strike Price"}},"yaxis2":{"anchor":"x2","domain":[0.0,0.27899999999999997],"title":{"text":"IV (%)"}},"annotations":[{"font":{"size":16},"showarrow":false,"text":"Dealer Net GEX Profile\u003cbr\u003e\u003cb style='color:#00FF00; font-size:16px;'\u003e\ud83d\udfe2 POSITIVE GAMMA REGIME (\u62bc\u3057\u76ee\u8cb7\u3044\u512a\u4f4d)\u003c\u002fb\u003e","x":0.5,"xanchor":"center","xref":"paper","y":0.9999999999999999,"yanchor":"bottom","yref":"paper"},{"font":{"size":16},"showarrow":false,"text":"Implied Volatility Smile","x":0.5,"xanchor":"center","xref":"paper","y":0.27899999999999997,"yanchor":"bottom","yref":"paper"},{"bgcolor":"rgba(255,0,0,0.6)","bordercolor":"red","borderwidth":1,"font":{"color":"white","size":13},"showarrow":false,"text":"Zero-Gamma\u003cbr\u003e434.801","x":434.8011297527673,"xanchor":"right","xref":"x","y":1,"yanchor":"top","yref":"y domain"},{"bgcolor":"rgba(255,255,0,0.8)","bordercolor":"yellow","borderwidth":1,"font":{"color":"black","size":13},"showarrow":false,"text":"Current Spot\u003cbr\u003e461.000","x":461.0,"xanchor":"left","xref":"x","y":0,"yanchor":"bottom","yref":"y domain"}],"shapes":[{"line":{"color":"red","dash":"dashdot","width":2},"type":"line","x0":434.8011297527673,"x1":434.8011297527673,"xref":"x","y0":0,"y1":1,"yref":"y domain"},{"line":{"color":"yellow","dash":"solid","width":2},"type":"line","x0":461.0,"x1":461.0,"xref":"x","y0":0,"y1":1,"yref":"y domain"}],"margin":{"t":120},"legend":{"orientation":"h","yanchor":"bottom","y":1.05,"xanchor":"right","x":1},"title":{"text":"Quant Options Radar: \u30b3\u30fc\u30f3\u5148\u7269 (ZC) | Expiry: 08_21_26\u003cbr\u003e\u003cspan style='font-size: 13px; color: #aaaaaa;'\u003eAs of: 07-11-2026\u003c\u002fspan\u003e"},"height":850,"barmode":"relative","hovermode":"x unified","dragmode":false},                        {"displayModeBar": false, "responsive": true}                    )                };            </script>        </div>
-
-        </div>
-    </div> <!-- chart-scroll-container end -->
-    
-    <div class="ai-panel-container">
-        <div class="ai-panel">
-            <div class="ai-panel-header"><span>●</span> DAILY QUANT INSIGHT (Powered by Gemini AI)</div>
-            <h3>ZCコーン先物: GEXデータに基づく重力場分析とトレード戦略</h3>
-
-<p>
-    現在の市場は、スポット価格 <strong style="color: #FFFF66;">461.000</strong> で推移しており、<strong style="color: #6699FF;">Zero-Gamma境界線 434.801</strong> を大きく上回っています。この状況は「<strong style="color: #6699FF;">POSITIVE</strong>」レジームにあり、市場参加者のヘッジ行動がボラティリティを抑制し、押し目買いが有効なレンジ相場を示唆しています。
-</p>
-
-<ul>
-    <li>
-        現在のスポット価格は、直近の強力なサポートエリア（Put Wall 460.0、Put Wall 450.0、Call Wall 450.0）の上に位置しています。
-    </li>
-    <li>
-        特に <strong style="color: #66FF66;">Strike 450.0</strong> には、<strong style="color: #33CC33;">GEX: 0.10M</strong> の大きなCall Wallが存在しており、価格がこの水準まで下落した場合、ディーラーのロングガンマヘッジによる買い圧力が強く働き、非常に強固なサポートとして機能する可能性が高いです。
-    </li>
-    <li>
-        直近のサポートは <strong style="color: #66FF66;">Strike 460.0</strong> (<strong style="color: #33CC33;">GEX: -0.03M</strong>) に位置しており、現在の価格とほぼ同水準で下支えが見込まれます。
-    </li>
-    <li>
-        主要なレジスタンスは、<strong style="color: #FF6666;">Strike 500.0</strong> (<strong style="color: #CC3333;">GEX: 0.05M</strong>) に形成されており、この水準が短期的な上昇の上限となる可能性が高いです。
-    </li>
-</ul>
-
-<h3>実践的トレード戦略</h3>
-
-<p>
-    現在の「POSITIVE」レジームとGEXデータに基づき、以下の具体的なアクションプランを推奨します。
-</p>
-
-<ul>
-    <li>
-        <strong>メイン戦略: 押し目買い (Buy the Dip)</strong>
-        <ul>
-            <li>
-                <strong>エントリーポイント:</strong>
-                <ul>
-                    <li>
-                        直近のPut Wallである <strong style="color: #66FF66;">460.000</strong> 付近、またはより強力なサポートである <strong style="color: #66FF66;">450.000</strong> 付近への下落時に買いポジションを検討します。特に <strong style="color: #66FF66;">450.000</strong> は厚いCall Wallにより、強力な買い支えが期待できます。
-                    </li>
-                </ul>
-            </li>
-            <li>
-                <strong>テイクプロフィット (利確):</strong>
-                <ul>
-                    <li>
-                        主要レジスタンスである <strong style="color: #FF6666;">500.000</strong> をターゲットとしますが、POSITIVEレジームでのレンジ傾向を考慮し、<strong style="color: #FF6666;">480.000 - 490.000</strong> のレンジで段階的な利益確定を推奨します。
-                    </li>
-                </ul>
-            </li>
-            <li>
-                <strong>ストップロス (損切り):</strong>
-                <ul>
-                    <li>
-                        強いサポートである <strong style="color: #FF6666;">450.000</strong> を明確に割り込み、かつ <strong style="color: #FF6666;">Zero-Gamma境界線 434.801</strong> を下回る場合は、レジーム転換および下落加速のリスクが高まるため、損切りを断行します。具体的な損切りラインとしては <strong style="color: #FF6666;">445.000 - 448.000</strong> を目安とします。
-                    </li>
-                </ul>
-            </li>
-        </ul>
-    </li>
-    <li>
-        <strong>レンジブレイクへの注意:</strong>
-        <ul>
-            <li>
-                GEXデータが示す範囲を逸脱するような大きなファンダメンタルズ要因が発生した場合、ヘッジ行動の急変によりボラティリティが増大し、予測されたレンジが機能しなくなる可能性があります。常にニュースフローに注意を払い、リスク管理を徹底してください。
-            </li>
-        </ul>
-    </li>
-</ul>
+    <div class="chart-container">
+        <div class="chart-inner">
+            <div style="height:800px; width:100%;">                        <script>window.PlotlyConfig = {MathJaxConfig: 'local'};</script>
+        <script charset="utf-8" src="https://cdn.plot.ly/plotly-3.7.0.min.js" integrity="sha256-jvTGqxNp8AGWEcvNLVuKr+8j5dGe9Yw51LQkmDH+IYA=" crossorigin="anonymous"></script>                <div id="3ac4695e-e457-4910-b3d9-5b0cbb43def8" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("3ac4695e-e457-4910-b3d9-5b0cbb43def8")) {                    Plotly.newPlot(                        "3ac4695e-e457-4910-b3d9-5b0cbb43def8",                        [{"marker":{"color":"#00FFFF"},"name":"Call GEX (\u30ec\u30b8\u30b9\u30bf\u30f3\u30b9)","opacity":0.8,"x":{"dtype":"f8","bdata":"AAAAAABwd0AAAAAAAMB3QAAAAAAAEHhAAAAAAABgeEAAAAAAALB4QAAAAAAAAHlAAAAAAABQeUAAAAAAAKB5QAAAAAAA8HlAAAAAAABAekAAAAAAAJB6QAAAAAAA4HpAAAAAAAAwe0AAAAAAAIB7QAAAAAAA0HtAAAAAAAAgfEAAAAAAAHB8QAAAAAAAwHxAAAAAAAAQfUAAAAAAAGB9QAAAAAAAsH1AAAAAAAAAfkAAAAAAAFB+QAAAAAAAoH5AAAAAAADwfkAAAAAAAEB\u002fQAAAAAAAkH9AAAAAAADgf0AAAAAAABiAQAAAAAAAQIBAAAAAAABogEAAAAAAAJCAQAAAAAAAuIBAAAAAAADggEAAAAAAAAiBQAAAAAAAMIFAAAAAAABYgUAAAAAAAICBQA=="},"y":{"dtype":"f8","bdata":"AJF++zpwwD+1vHK9babCP1HDt7BuvMs\u002fgpAsYAK35j\u002f\u002fJalMMYfsPzeJQWDlQBxAUYL+Qo8YAUB0KENVTFU6QG5Wfa62GjRAwMsMG2VEX0Bjc9U8R+RkQGHij6JOcGNASKRt\u002fIk3WUAplfCEntZwQOMZNPRP3VFAFeEmo+pYi0BosKnzKAReQE1SmWIOHXZAU0gyq3e8VEB7VtKK7+1yQHCxogbT71NATYv6JHcIaUB2yM1wA\u002fxaQOdR8X\u002fHp1NA1TBD44kgTkABwRw9XlZzQByxFp8C00BA6H3ja8+sWkDYJaq3BjJEQMZim1Q0+1dAEZ87wf5bLUDLv5ZXru88QGb0o+GUiQlAzojS3uDVPUDbp+MxAxs0QJ8B9WbUsGJAzxCOWfaEDkB3qnzPSOQtQA=="},"type":"bar","xaxis":"x","yaxis":"y"},{"marker":{"color":"#FF00FF"},"name":"Put GEX (\u30b5\u30dd\u30fc\u30c8)","opacity":0.8,"x":{"dtype":"f8","bdata":"AAAAAABwd0AAAAAAAMB3QAAAAAAAEHhAAAAAAABgeEAAAAAAALB4QAAAAAAAAHlAAAAAAABQeUAAAAAAAKB5QAAAAAAA8HlAAAAAAABAekAAAAAAAJB6QAAAAAAA4HpAAAAAAAAwe0AAAAAAAIB7QAAAAAAA0HtAAAAAAAAgfEAAAAAAAHB8QAAAAAAAwHxAAAAAAAAQfUAAAAAAAGB9QAAAAAAAsH1AAAAAAAAAfkAAAAAAAFB+QAAAAAAAoH5AAAAAAADwfkAAAAAAAEB\u002fQAAAAAAAkH9AAAAAAADgf0AAAAAAABiAQAAAAAAAQIBAAAAAAABogEAAAAAAAJCAQAAAAAAAuIBAAAAAAADggEAAAAAAAAiBQAAAAAAAMIFAAAAAAABYgUAAAAAAAICBQA=="},"y":{"dtype":"f8","bdata":"qyuf5XkwKsDAkNWtnoVOwF7+Q\u002frt6zTArg6AuKs7VcBJfVnaqSNJwM8KDFkdd2vAbIMT0a9tSsBwRzgteB1twFT83xEVDlbA+vIC7GMyccAoEeFfZPZxwALtDinGaHzA6Iu9F19mVsD43XTLzulowEVHcvkPNU\u002fAPBbbpOIXcsB6Lei9sTNTwPLs8q0PhW3AxRuZR\u002f6EQcDRP8HFivJgwL4Ts14MDlDAgZVDi2xHUcCYwRiRKN5QwDGZKhiVojHAXl0VqMXg9b82kC42raQUwOp7DcFx2fy\u002f0L2HS477+7+zXaEPlrHxv8sMG2X9Zue\u002ftbxyvW2m0r90qRH6mfoOwM20\u002fSsrTZq\u002fAAAAAAAAAIAyrrg4KjeBvy9P54pSQoC\u002fROigSzj0hr8ukKD4Meaqvw=="},"type":"bar","xaxis":"x","yaxis":"y"},{"line":{"color":"white","width":2},"marker":{"size":4},"mode":"lines+markers","name":"Net GEX","x":{"dtype":"f8","bdata":"AAAAAABwd0AAAAAAAMB3QAAAAAAAEHhAAAAAAABgeEAAAAAAALB4QAAAAAAAAHlAAAAAAABQeUAAAAAAAKB5QAAAAAAA8HlAAAAAAABAekAAAAAAAJB6QAAAAAAA4HpAAAAAAAAwe0AAAAAAAIB7QAAAAAAA0HtAAAAAAAAgfEAAAAAAAHB8QAAAAAAAwHxAAAAAAAAQfUAAAAAAAGB9QAAAAAAAsH1AAAAAAAAAfkAAAAAAAFB+QAAAAAAAoH5AAAAAAADwfkAAAAAAAEB\u002fQAAAAAAAkH9AAAAAAADgf0AAAAAAABiAQAAAAAAAQIBAAAAAAABogEAAAAAAAJCAQAAAAAAAuIBAAAAAAADggEAAAAAAAAiBQAAAAAAAMIFAAAAAAABYgUAAAAAAAICBQA=="},"y":{"dtype":"f8","bdata":"ZzGx+bjuKcADHhhA+HJOwNeO4hx1tDTAjbW\u002fsz0OVcCx2CYVjbFIwIX+CS4WlWrARpvj3CZcScBi4o+iztJpwLmmQGZnB1HAE4B\u002fSpXCYsDbXdkFAxFewNH7xteesHLAAcOAJVeJJkCzmNh83IZRQAOy17s\u002fFiJA+FW5UPlMgkDbBYNr7qBFQFBvfy4aal1A4HTLDvHzR0AkbeNPVOlkQJHtfD81Di9AjcBY38BkYEC9DWq\u002ftTtEQDZXzXNEfk5A6oUCtoNxTUDABkSIywNzQHqKHCJu2D9A8V61MuE8WkDqGi0HeqRDQK0s0VlmzFdALAlQU8vGLECcilQYWxA5QP34S4v6VAlAzojS3uDVPUDFkJxM3Bg0QALWql2TsGJA529CIQJuDkDmCYSdYsktQA=="},"type":"scatter","xaxis":"x","yaxis":"y"},{"line":{"color":"#FFA500","width":2},"marker":{"size":4},"mode":"lines+markers","name":"IV","x":{"dtype":"f8","bdata":"AAAAAABwd0AAAAAAAMB3QAAAAAAAEHhAAAAAAABgeEAAAAAAALB4QAAAAAAAAHlAAAAAAABQeUAAAAAAAKB5QAAAAAAA8HlAAAAAAABAekAAAAAAAJB6QAAAAAAA4HpAAAAAAAAwe0AAAAAAAIB7QAAAAAAA0HtAAAAAAAAgfEAAAAAAAHB8QAAAAAAAwHxAAAAAAAAQfUAAAAAAAGB9QAAAAAAAsH1AAAAAAAAAfkAAAAAAAFB+QAAAAAAAoH5AAAAAAADwfkAAAAAAAEB\u002fQAAAAAAAkH9AAAAAAADgf0AAAAAAABiAQAAAAAAAQIBAAAAAAABogEAAAAAAAJCAQAAAAAAAuIBAAAAAAADggEAAAAAAAAiBQAAAAAAAMIFAAAAAAABYgUAAAAAAAICBQA=="},"y":{"dtype":"f8","bdata":"XI\u002fC9Sg8PECQwvUoXI87QK5H4XoUTjtA4noUrkdhOkAehetRuD46QOF6FK5H4TlAzMzMzMysOUCF61G4HoU5QFyPwvUofDlAHoXrUbh+OUAfhetRuL45QLgehetR2DlAXI\u002fC9Sg8OkDXo3A9Cpc6QArXo3A9CjtACtejcD1KO0BxPQrXo9A7QBSuR+F6NDxAXI\u002fC9SicPEAzMzMzMxM9QKRwPQrXgz1A9ihcj8L1PUAUrkfhenQ+QKRwPQrX4z5A16NwPQp3P0D2KFyPwtU\u002fQLgehetROEBAAAAAAABwQEAzMzMzM7NAQJDC9ShcL0FAH4XrUbhOQUDiehSuR7FBQLgehetRCEJANDMzMzNTQkAAAAAAAJBCQLgehetROENAwvUoXI9iQ0CG61G4HgVEQA=="},"type":"scatter","xaxis":"x2","yaxis":"y2"}],                        {"template":{"data":{"barpolar":[{"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"bar":[{"error_x":{"color":"#f2f5fa"},"error_y":{"color":"#f2f5fa"},"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"carpet":[{"aaxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"baxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"type":"carpet"}],"choropleth":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"choropleth"}],"contourcarpet":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"contourcarpet"}],"contour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"contour"}],"heatmap":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"heatmap"}],"histogram2dcontour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2dcontour"}],"histogram2d":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2d"}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"mesh3d":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"mesh3d"}],"parcoords":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"parcoords"}],"pie":[{"automargin":true,"type":"pie"}],"scatter3d":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatter3d"}],"scattercarpet":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattercarpet"}],"scattergeo":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattergeo"}],"scattergl":[{"marker":{"line":{"color":"#283442"}},"type":"scattergl"}],"scattermapbox":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermapbox"}],"scattermap":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermap"}],"scatterpolargl":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolargl"}],"scatterpolar":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolar"}],"scatter":[{"marker":{"line":{"color":"#283442"}},"type":"scatter"}],"scatterternary":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterternary"}],"surface":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"surface"}],"table":[{"cells":{"fill":{"color":"#506784"},"line":{"color":"rgb(17,17,17)"}},"header":{"fill":{"color":"#2a3f5f"},"line":{"color":"rgb(17,17,17)"}},"type":"table"}]},"layout":{"annotationdefaults":{"arrowcolor":"#f2f5fa","arrowhead":0,"arrowwidth":1},"autotypenumbers":"strict","coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]],"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]},"colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#f2f5fa"},"geo":{"bgcolor":"rgb(17,17,17)","lakecolor":"rgb(17,17,17)","landcolor":"rgb(17,17,17)","showlakes":true,"showland":true,"subunitcolor":"#506784"},"hoverlabel":{"align":"left"},"hovermode":"closest","mapbox":{"style":"dark"},"paper_bgcolor":"rgb(17,17,17)","plot_bgcolor":"rgb(17,17,17)","polar":{"angularaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","radialaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"scene":{"xaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"yaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"zaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"}},"shapedefaults":{"line":{"color":"#f2f5fa"}},"sliderdefaults":{"bgcolor":"#C8D4E3","bordercolor":"rgb(17,17,17)","borderwidth":1,"tickwidth":0},"ternary":{"aaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"baxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","caxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"title":{"x":0.05},"updatemenudefaults":{"bgcolor":"#506784","borderwidth":0},"xaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2},"yaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2}}},"xaxis":{"anchor":"y","domain":[0.0,1.0],"matches":"x2","showticklabels":false,"title":{"text":""}},"yaxis":{"anchor":"x","domain":[0.37,1.0],"title":{"text":"GEX ($M)"}},"xaxis2":{"anchor":"y2","domain":[0.0,1.0],"title":{"text":"Strike Price"}},"yaxis2":{"anchor":"x2","domain":[0.0,0.27],"title":{"text":"IV (%)"}},"annotations":[{"font":{"size":16},"showarrow":false,"text":"Dealer Net GEX Profile\u003cbr\u003e\u003cspan style='font-size: 14px; color: #ff0000;'\u003e\ud83d\udd34 NEGATIVE GAMMA REGIME (\u30d1\u30cb\u30c3\u30af\u58f2\u308a\u8b66\u6212)\u003c\u002fspan\u003e","x":0.5,"xanchor":"center","xref":"paper","y":1.0,"yanchor":"bottom","yref":"paper"},{"font":{"size":16},"showarrow":false,"text":"Implied Volatility Smile","x":0.5,"xanchor":"center","xref":"paper","y":0.27,"yanchor":"bottom","yref":"paper"},{"bgcolor":"red","font":{"color":"white"},"showarrow":false,"text":"Zero-Gamma\u003cbr\u003e560.0","x":560.0,"xanchor":"right","xref":"x","y":1,"yanchor":"top","yref":"y domain"},{"bgcolor":"yellow","font":{"color":"black"},"showarrow":false,"text":"Current Spot\u003cbr\u003e467.0","x":467.0,"xanchor":"left","xref":"x","y":0,"yanchor":"bottom","yref":"y domain"}],"shapes":[{"line":{"color":"red","dash":"dashdot","width":2},"type":"line","x0":560.0,"x1":560.0,"xref":"x","y0":0,"y1":1,"yref":"y domain"},{"line":{"color":"yellow","width":2},"type":"line","x0":467.0,"x1":467.0,"xref":"x","y0":0,"y1":1,"yref":"y domain"}],"margin":{"l":50,"r":50,"t":100,"b":50},"legend":{"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"right","x":1},"title":{"text":"Quant Options Radar: \u30b3\u30fc\u30f3\u5148\u7269 (ZC) | Expiry: 08_21_26\u003cbr\u003e\u003cspan style='font-size: 13px; color: #aaaaaa;'\u003eAs of: 07-11-2026\u003c\u002fspan\u003e"},"barmode":"relative","hovermode":"x unified","height":800},                        {"responsive": true}                    )                };            </script>        </div>
         </div>
     </div>
+    <div class="insight-panel">
+        <div class="insight-title"><span>●</span> DAILY QUANT INSIGHT (Powered by Gemini AI)</div>
+        <div class="insight-content">
+            <p style='color: #ff4444;'>[エラー] 全てのAIモデルでインサイト生成に失敗しました。詳細: None</p>
+        </div>
+    </div>
+    </body>
+    </html>
     
-<script>
-window.addEventListener("load", function() {
-var container = document.querySelector(".chart-scroll-container");
-if (container) { container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2; }
-});
-</script>
-</body>
-</html>
