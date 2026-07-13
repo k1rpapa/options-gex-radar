@@ -49,7 +49,6 @@ def clean_val(val):
 
 def load_barchart_csv(asset_key):
     prefix = asset_key.lower()
-    # 先頭がティッカー名で始まり、特定のキーワードを含むファイルを検索
     sb_files = sorted(glob.glob(f"{prefix}*side-by-side*.csv"))
     gk_files = sorted(glob.glob(f"{prefix}*volatility-greeks*.csv"))
     
@@ -68,7 +67,7 @@ def load_barchart_csv(asset_key):
     return df_sb, df_gk, expiry
 
 # ==========================================
-# AI インサイト生成 (w/ Smart Retry & Rate Limit Evasion)
+# AI インサイト生成 (Static Model Selection)
 # ==========================================
 def generate_ai_insight(asset_name, spot, call_wall, put_wall, zero_gamma, regime):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -110,19 +109,13 @@ Zero-Gamma: {zero_gamma}
 </div>
 """
     try:
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        # 1日1500回の無料枠がある 1.5-flash を最優先にする (2.5-flashは1日20回制限で即死するため除外傾向)
-        preferred_order = [
-            "models/gemini-1.5-flash", "models/gemini-1.5-flash-latest", 
-            "models/gemini-1.5-pro", "models/gemini-pro"
-        ]
-        target_models = [m for m in preferred_order if m in available_models]
-        if not target_models:
-            target_models = [available_models[0]] if available_models else ["gemini-1.5-flash"]
+        # 動的探索を廃止し、無料枠（1500回/日）の多い1.5系を明示的に指定。
+        # 1日20回制限で即死する2.5-flashへの誤爆を完全に防ぐ。
+        target_models = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]
             
         last_error = "None"
         for m_name in target_models:
-            model = genai.GenerativeModel(model_name=m_name.replace("models/", ""))
+            model = genai.GenerativeModel(model_name=m_name)
             
             for attempt in range(2):
                 try:
@@ -135,7 +128,7 @@ Zero-Gamma: {zero_gamma}
                         print(f"[*] API Limit/Quota Hit on {m_name}. Waiting 60s... (Attempt {attempt+1})")
                         time.sleep(60)
                     else:
-                        print(f"[-] Model {m_name} failed. Falling back.")
+                        print(f"[-] Model {m_name} failed. Falling back to next model.")
                         time.sleep(2)
                         break 
                         
@@ -152,44 +145,53 @@ def process_asset(asset_key, config):
     if df_sb is None:
         raise FileNotFoundError(f"CSV files not found for {asset_key}")
         
-    # カラム名のクリーンアップ
     df_sb.columns = [str(c).strip() for c in df_sb.columns]
     df_gk.columns = [str(c).strip() for c in df_gk.columns]
     
     df_sb['Strike'] = df_sb['Strike'].apply(parse_strike)
     df_gk['Strike'] = df_gk['Strike'].apply(parse_strike)
     
-    # 【最重要修正】横並び (Side-by-Side) CSVから、列名/インデックスで直接CallとPutを抜き出す
-    # Side-by-Side ファイルからの OI 抽出
-    call_oi_col = 'Open Int' if 'Open Int' in df_sb.columns else df_sb.columns[3]
-    put_oi_col = 'Open Int.1' if 'Open Int.1' in df_sb.columns else df_sb.columns[9]
-    df_sb['Call_OpenInt'] = df_sb[call_oi_col].apply(clean_val)
-    df_sb['Put_OpenInt'] = df_sb[put_oi_col].apply(clean_val)
+    # 動的カラム解決 (GreeksとSide-by-Sideの不整合対策)
+    def extract_oi(df, type_name):
+        type_mask = df['Type'].astype(str).str.contains(type_name, case=False, na=False)
+        cols = [c for c in df.columns if 'Open Int' in c or 'OI' in c]
+        if not cols:
+            return pd.Series(0, index=df.index)
+        oi_col = cols[0]
+        res = pd.Series(0.0, index=df.index)
+        res[type_mask] = df.loc[type_mask, oi_col].apply(clean_val)
+        return res
+
+    df_sb['Call_OpenInt'] = extract_oi(df_sb, 'Call')
+    df_sb['Put_OpenInt'] = extract_oi(df_sb, 'Put')
     
-    # Greeks ファイルからの Gamma / IV 抽出
-    gamma_call_col = 'Gamma' if 'Gamma' in df_gk.columns else df_gk.columns[3]
-    gamma_put_col = 'Gamma.1' if 'Gamma.1' in df_gk.columns else df_gk.columns[13]
-    iv_call_col = 'IV' if 'IV' in df_gk.columns else df_gk.columns[1]
-    iv_put_col = 'IV.1' if 'IV.1' in df_gk.columns else df_gk.columns[11]
+    # 縦並びのGreeksからCall/Putを分離
+    call_gk = df_gk[df_gk['Type'].astype(str).str.contains('Call', case=False, na=False)].copy()
+    put_gk = df_gk[df_gk['Type'].astype(str).str.contains('Put', case=False, na=False)].copy()
     
-    df_gk['Gamma_Call'] = df_gk[gamma_call_col].apply(clean_val)
-    df_gk['Gamma_Put'] = df_gk[gamma_put_col].apply(clean_val)
-    df_gk['IV_Call'] = df_gk[iv_call_col].apply(clean_val)
-    df_gk['IV_Put'] = df_gk[iv_put_col].apply(clean_val)
+    # 列名の正規化
+    for col in call_gk.columns:
+        if 'Gamma' in col: call_gk.rename(columns={col: 'Gamma_Call'}, inplace=True)
+        if 'IV' in col and 'Skew' not in col: call_gk.rename(columns={col: 'IV_Call'}, inplace=True)
+    for col in put_gk.columns:
+        if 'Gamma' in col: put_gk.rename(columns={col: 'Gamma_Put'}, inplace=True)
+        if 'IV' in col and 'Skew' not in col: put_gk.rename(columns={col: 'IV_Put'}, inplace=True)
 
     # Strikeを軸にマージ
-    df_merged = pd.merge(df_gk[['Strike', 'Gamma_Call', 'Gamma_Put', 'IV_Call', 'IV_Put']], 
-                         df_sb[['Strike', 'Call_OpenInt', 'Put_OpenInt']], 
-                         on='Strike', how='inner').fillna(0)
+    df_call_sb = df_sb[df_sb['Call_OpenInt'] > 0][['Strike', 'Call_OpenInt']].drop_duplicates('Strike')
+    df_put_sb = df_sb[df_sb['Put_OpenInt'] > 0][['Strike', 'Put_OpenInt']].drop_duplicates('Strike')
+    
+    df_merged = call_gk[['Strike', 'Gamma_Call', 'IV_Call']].merge(df_call_sb, on='Strike', how='outer')
+    df_merged = df_merged.merge(put_gk[['Strike', 'Gamma_Put', 'IV_Put']], on='Strike', how='outer')
+    df_merged = df_merged.merge(df_put_sb, on='Strike', how='outer')
+    df_merged = df_merged.fillna(0)
                          
     mult = config['multiplier']
-    
-    # Total GEX Calculation: (Gamma * OI * 100 * Multiplier) / 1,000,000
     df_merged['Call_GEX'] = df_merged['Gamma_Call'] * df_merged['Call_OpenInt'] * mult * 100 / 1e6 
     df_merged['Put_GEX'] = df_merged['Gamma_Put'] * df_merged['Put_OpenInt'] * mult * 100 * -1 / 1e6 
     df_merged['Total_GEX'] = df_merged['Call_GEX'] + df_merged['Put_GEX']
     
-    # スポット価格の取得 (週末考慮 period="5d")
+    # スポット価格取得 (週末対策 period="5d")
     spot_price = 0.0
     spot_date = datetime.now().strftime('%m-%d-%Y')
     try:
@@ -203,7 +205,6 @@ def process_asset(asset_key, config):
     if spot_price == 0.0:
         spot_price = df_merged['Strike'].median()
 
-    # Zero-Gamma 算出 (流動性フィルタ ＋ 線形補間)
     min_strike = spot_price * 0.8
     max_strike = spot_price * 1.2
     margin = (max_strike - min_strike) * 0.1
@@ -212,9 +213,9 @@ def process_asset(asset_key, config):
     if df_filtered.empty:
         df_filtered = df_merged.copy()
 
+    # Zero-Gamma 算出 (線形補間)
     df_sorted = df_filtered.sort_values('Strike').reset_index(drop=True)
     df_sorted['Total_OI'] = df_sorted['Call_OpenInt'] + df_sorted['Put_OpenInt']
-    
     valid_mask = df_sorted['Total_OI'] > df_sorted['Total_OI'].max() * 0.05
     df_valid = df_sorted[valid_mask].reset_index(drop=True)
     
@@ -246,9 +247,7 @@ def process_asset(asset_key, config):
     regime = "POSITIVE GAMMA REGIME (押し目買い優位)" if spot_price > zero_gamma_strike else "NEGATIVE GAMMA REGIME (パニック売り警戒)"
     regime_color = "#44c265" if spot_price > zero_gamma_strike else "#fe8983"
     
-    # ==========================================
     # グラフ描画
-    # ==========================================
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
     
     fig.add_trace(go.Bar(x=df_filtered['Strike'], y=df_filtered['Call_GEX'], name='Call GEX (レジスタンス)', marker_color='#06bbdf'), row=1, col=1)
@@ -276,7 +275,6 @@ def process_asset(asset_key, config):
 
     graph_html = fig.to_html(full_html=False, include_plotlyjs='cdn')
     
-    # AIインサイト呼び出し
     ai_html = generate_ai_insight(config['name'], spot_price, call_wall_strike, put_wall_strike, zero_gamma_strike, regime)
 
     html_content = f"""
