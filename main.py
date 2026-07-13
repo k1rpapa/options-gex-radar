@@ -91,7 +91,7 @@ def generate_ai_insight(asset_name, spot_price, zero_gamma, call_wall, put_wall,
     genai.configure(api_key=api_key)
     
     prompt = f"""
-    あなたは凄腕のクオンツ・オプション・トレーダーです。以下のGEXデータに基づき、プロのCFDトレーダーに向けた今日のトレードの作戦指令（インサイト）を短く、鋭く、箇条書きで出力してください。Markdownの装飾を効果的に使い、HTMLタグにフォーマットして出力すること。
+    あなたは凄腕のクオンツ・オプション・トレーダーです。以下のGEXデータに基づき、プロのCFDトレーダーに向けた今日のトレードの作戦指令（インサイト）を出力してください。
 
     # データ
     - 銘柄: {asset_name}
@@ -101,9 +101,29 @@ def generate_ai_insight(asset_name, spot_price, zero_gamma, call_wall, put_wall,
     - プットの壁(サポート): {put_wall}
     - 現在のレジーム: {regime}
 
-    # 出力要件
-    初心者向けの解説（GEXとは何か、レジームとは何かなど）は絶対に不要。無駄な前置きや後書きも避けること。
-    現在の重力場から読み取れる「具体的なエントリー/エグジット/撤退の目安」だけを、プロフェッショナルなトーンで出力せよ。
+    # 出力要件 (厳守事項)
+    1. 初心者向けの解説や、無駄な前置き・挨拶は一切不要。
+    2. Markdownのコードブロック記号（``` や ```html など）は絶対に出力しないこと。
+    3. 以下のHTMLテンプレート構造に**完全に**従い、中身のテキストのみを状況に合わせて書き換えて出力すること。ダッシュボードの統一感を保つため、タグの構造やインラインCSSは一切変更しないこと。
+
+    # 出力HTMLテンプレート
+    <div>
+        <h4 style="color: #00FFFF; margin-top: 0; border-bottom: 1px solid #444; padding-bottom: 5px; font-size: 15px;">■ オペレーション指令: {asset_name}</h4>
+        <ul style="list-style-type: none; padding-left: 0; margin-bottom: 0;">
+            <li style="margin-bottom: 12px;">
+                <span style="background-color: #444; padding: 2px 6px; border-radius: 3px; color: #fff; font-weight: bold; font-size: 12px;">現状認識</span>
+                <span style="margin-left: 5px;">（ここに重力場とレジームの現状を簡潔に1〜2文で記述。各壁の数値を必ず含めること。）</span>
+            </li>
+            <li style="margin-bottom: 12px;">
+                <span style="background-color: #0055ff; padding: 2px 6px; border-radius: 3px; color: #fff; font-weight: bold; font-size: 12px;">ロング戦略</span>
+                <span style="margin-left: 5px;">（ここに具体的なエントリーポイント、利確目標、撤退ラインを記述。）</span>
+            </li>
+            <li style="margin-bottom: 12px;">
+                <span style="background-color: #ff3333; padding: 2px 6px; border-radius: 3px; color: #fff; font-weight: bold; font-size: 12px;">ショート戦略</span>
+                <span style="margin-left: 5px;">（ここに具体的なエントリーポイント、利確目標、撤退ラインを記述。）</span>
+            </li>
+        </ul>
+    </div>
     """
     
     # 動的モデル探索とフォールバック・カスケード（Canary Radar仕様）
@@ -131,8 +151,15 @@ def generate_ai_insight(asset_name, spot_price, zero_gamma, call_wall, put_wall,
         time.sleep(3)
         print(f"[*] Dynamic Model Discovery: AI Core '{target_model}' Engaged for {asset_name}.")
         model = genai.GenerativeModel(model_name=target_model)
+        
         response = model.generate_content(prompt)
-        return response.text
+        out_text = response.text
+        
+        # AIが誤ってMarkdownのコードブロック記号を含めた場合のクレンジング
+        out_text = re.sub(r'^```(?:html)?\s*', '', out_text)
+        out_text = re.sub(r'\s*```$', '', out_text)
+        
+        return out_text.strip()
         
     except Exception as e:
         trace = traceback.format_exc()
