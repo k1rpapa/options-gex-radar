@@ -49,6 +49,7 @@ def clean_val(val):
 
 def load_barchart_csv(asset_key):
     prefix = asset_key.lower()
+    # 先頭がティッカー名で始まり、特定のキーワードを含むファイルを厳格に検索
     sb_files = sorted(glob.glob(f"{prefix}*side-by-side*.csv"))
     gk_files = sorted(glob.glob(f"{prefix}*volatility-greeks*.csv"))
     
@@ -67,7 +68,7 @@ def load_barchart_csv(asset_key):
     return df_sb, df_gk, expiry
 
 # ==========================================
-# AI インサイト生成
+# AI インサイト生成 (w/ Smart Retry & Backoff)
 # ==========================================
 def generate_ai_insight(asset_name, spot, call_wall, put_wall, zero_gamma, regime):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -78,7 +79,7 @@ def generate_ai_insight(asset_name, spot, call_wall, put_wall, zero_gamma, regim
     
     prompt = f"""
 あなたは冷徹で論理的なクオンツ・アナリストです。以下のデータに基づき、指定したHTMLフォーマットにのみ従って作戦指令を出力してください。
-Markdownのコードブロック（```html等）や、挨拶、追加の説明は絶対に含めないでください。
+Markdownのコードブロック（```html等）や、挨拶、追加の説明は絶対に含めないでください。デザインやHTML構造の改変は一切禁止します。
 
 データ:
 銘柄: {asset_name}
@@ -88,7 +89,7 @@ Put Wall (サポート): {put_wall}
 Zero-Gamma: {zero_gamma}
 レジーム: {regime}
 
-出力フォーマット（変数部分を埋めてそのまま出力）:
+出力フォーマット（必ず以下のHTML構造のまま、[ ] の部分だけを分析内容で埋めて出力すること）:
 <div style="background:#1a1d21; padding:16px; border-radius:8px; border-left:4px solid var(--primary); font-family:sans-serif; line-height:1.6; margin-top:20px;">
     <h3 style="margin-top:0; color:#e0e0e0; font-size:16px; border-bottom:1px solid #333; padding-bottom:8px;">{asset_name} GEX オペレーション指令</h3>
     
@@ -111,7 +112,7 @@ Zero-Gamma: {zero_gamma}
     try:
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         preferred_order = [
-            "models/gemini-1.5-flash-latest", "models/gemini-1.5-flash", 
+            "models/gemini-2.5-flash", "models/gemini-1.5-flash-latest", "models/gemini-1.5-flash", 
             "models/gemini-1.5-pro-latest", "models/gemini-1.5-pro", "models/gemini-pro"
         ]
         target_models = [m for m in preferred_order if m in available_models]
@@ -120,17 +121,25 @@ Zero-Gamma: {zero_gamma}
             
         last_error = "None"
         for m_name in target_models:
-            try:
-                model = genai.GenerativeModel(model_name=m_name.replace("models/", ""))
-                response = model.generate_content(prompt)
-                # Markdownブロックのクレンジング
-                html_res = response.text.replace('```html', '').replace('```', '').strip()
-                return html_res
-            except Exception as e:
-                last_error = str(e)
-                time.sleep(3) # レートリミット回避
-                continue
-                
+            model = genai.GenerativeModel(model_name=m_name.replace("models/", ""))
+            
+            # 429対策: 同じモデルで最大2回までリトライ (Backoff)
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    response = model.generate_content(prompt)
+                    html_res = response.text.replace('```html', '').replace('```', '').strip()
+                    return html_res
+                except Exception as e:
+                    last_error = str(e)
+                    if "429" in last_error or "Quota" in last_error:
+                        print(f"[*] API Rate Limit Hit (429) on {m_name}. Waiting 60s... (Attempt {attempt+1}/{max_retries})")
+                        time.sleep(60) # サーバ側からの要求(約52秒)を上回る猶予を持たせる
+                    else:
+                        print(f"[-] Model {m_name} failed. Falling back to next model.")
+                        time.sleep(3)
+                        break # 429以外のエラーなら内側ループを抜けて次のモデルへ
+                        
         return f"<p style='color:red;'>[エラー] 全てのAIモデルでインサイト生成に失敗しました。<br>詳細: {last_error}</p>"
         
     except Exception as e:
@@ -142,7 +151,7 @@ Zero-Gamma: {zero_gamma}
 def process_asset(asset_key, config):
     df_sb, df_gk, expiry = load_barchart_csv(asset_key)
     if df_sb is None:
-        raise FileNotFoundError("CSV files not found")
+        raise FileNotFoundError(f"CSV files not found for {asset_key}")
         
     df_sb.columns = [str(c).strip() for c in df_sb.columns]
     df_gk.columns = [str(c).strip() for c in df_gk.columns]
@@ -150,17 +159,12 @@ def process_asset(asset_key, config):
     df_sb['Strike'] = df_sb['Strike'].apply(parse_strike)
     df_gk['Strike'] = df_gk['Strike'].apply(parse_strike)
     
-    # 動的カラム解決 (Pandas Mergeの接尾辞エラー回避)
-    if 'Open Int' in df_sb.columns and 'Open Int.1' in df_sb.columns:
-        df_sb['Call_OpenInt'] = df_sb['Open Int'].apply(clean_val)
-        df_sb['Put_OpenInt'] = df_sb['Open Int.1'].apply(clean_val)
-    else:
-        # フォールバック: 通常3番目と9番目あたりにある
-        try:
-            df_sb['Call_OpenInt'] = df_sb.iloc[:, 3].apply(clean_val)
-            df_sb['Put_OpenInt'] = df_sb.iloc[:, 9].apply(clean_val)
-        except Exception as e:
-            raise KeyError(f"Failed to resolve Open Interest columns: {e}")
+    # 動的カラム解決 (Pandas Merge仕様による KeyError 回避)
+    call_oi_col = 'Open Int' if 'Open Int' in df_sb.columns else df_sb.columns[3]
+    put_oi_col = 'Open Int.1' if 'Open Int.1' in df_sb.columns else df_sb.columns[9]
+    
+    df_sb['Call_OpenInt'] = df_sb[call_oi_col].apply(clean_val)
+    df_sb['Put_OpenInt'] = df_sb[put_oi_col].apply(clean_val)
             
     df = pd.merge(df_gk, df_sb[['Strike', 'Call_OpenInt', 'Put_OpenInt']], on='Strike', how='left')
     df['Call_OpenInt'] = df['Call_OpenInt'].fillna(0)
@@ -178,7 +182,6 @@ def process_asset(asset_key, config):
                          
     mult = config['multiplier']
     # Total GEX = (Call Gamma * Call OI * 100 * Multiplier) - (Put Gamma * Put OI * 100 * Multiplier)
-    # in Millions ($M)
     df_merged['Call_GEX'] = df_merged['Gamma_Call'] * df_merged['Call_OpenInt'] * mult * 100 / 1e6 
     df_merged['Put_GEX'] = df_merged['Gamma_Put'] * df_merged['Put_OpenInt'] * mult * 100 * -1 / 1e6 
     df_merged['Total_GEX'] = df_merged['Call_GEX'] + df_merged['Put_GEX']
@@ -195,10 +198,9 @@ def process_asset(asset_key, config):
         print(f"Warning: Failed to fetch spot price for {config['ticker']}: {e}")
         
     if spot_price == 0.0:
-        # Fallback to middle of strikes
         spot_price = df_merged['Strike'].median()
 
-    # Zero-Gamma Calculation (線形補間と流動性フィルターによる高度化)
+    # Zero-Gamma Calculation (線形補間と流動性フィルター)
     min_strike = spot_price * 0.8
     max_strike = spot_price * 1.2
     margin = (max_strike - min_strike) * 0.1
@@ -210,7 +212,6 @@ def process_asset(asset_key, config):
     df_sorted = df_filtered.sort_values('Strike').reset_index(drop=True)
     df_sorted['Total_OI'] = df_sorted['Call_OpenInt'] + df_sorted['Put_OpenInt']
     
-    # 流動性ノイズの排除 (Liquidity Filter)
     valid_mask = df_sorted['Total_OI'] > df_sorted['Total_OI'].max() * 0.05
     df_valid = df_sorted[valid_mask].reset_index(drop=True)
     
@@ -242,32 +243,25 @@ def process_asset(asset_key, config):
     regime = "POSITIVE GAMMA REGIME (押し目買い優位)" if spot_price > zero_gamma_strike else "NEGATIVE GAMMA REGIME (パニック売り警戒)"
     regime_color = "#44c265" if spot_price > zero_gamma_strike else "#fe8983"
     
-    # グラフの作成
+    # グラフ描画
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
     
-    # 上段: GEX
     fig.add_trace(go.Bar(x=df_filtered['Strike'], y=df_filtered['Call_GEX'], name='Call GEX (レジスタンス)', marker_color='#06bbdf'), row=1, col=1)
     fig.add_trace(go.Bar(x=df_filtered['Strike'], y=df_filtered['Put_GEX'], name='Put GEX (サポート)', marker_color='#c598ff'), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_filtered['Strike'], y=df_filtered['Total_GEX'], mode='lines+markers', name='Net GEX', line=dict(color='white', width=2), marker=dict(size=4)), row=1, col=1)
     
-    # ガイドライン
     fig.add_vline(x=spot_price, line_width=2, line_dash="solid", line_color="yellow", row=1, col=1, annotation_text=f"Current Spot<br>{spot_price}", annotation_position="bottom right", annotation_bgcolor="yellow", annotation_font_color="black")
     fig.add_vline(x=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="red", row=1, col=1, annotation_text=f"Zero-Gamma<br>{zero_gamma_strike}", annotation_position="top left", annotation_bgcolor="red", annotation_font_color="white")
     
-    # レジーム表示
     fig.add_annotation(x=0.5, y=1.05, xref="paper", yref="paper", text=f"Dealer Net GEX Profile<br><span style='color:{regime_color}'>● {regime}</span>", showarrow=False, font=dict(size=14, color="white"), align="center")
 
-    # 下段: IV
     df_filtered['IV_Avg'] = (df_filtered['IV_Call'] + df_filtered['IV_Put']) / 2
     fig.add_trace(go.Scatter(x=df_filtered['Strike'], y=df_filtered['IV_Avg'], mode='lines+markers', name='IV', line=dict(color='orange', width=2)), row=2, col=1)
     
     fig.update_layout(
         title=f"Quant Options Radar: {config['name']} | Expiry: {expiry}<br><sup style='font-size:12px;color:#c4c7c5'>As of: {spot_date}</sup>",
-        template="plotly_dark",
-        paper_bgcolor="#101218",
-        plot_bgcolor="#101218",
-        barmode='overlay',
-        hovermode="x unified",
+        template="plotly_dark", paper_bgcolor="#101218", plot_bgcolor="#101218",
+        barmode='overlay', hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     fig.update_yaxes(title_text="GEX ($M)", row=1, col=1, gridcolor="#2d2f38")
@@ -277,10 +271,8 @@ def process_asset(asset_key, config):
 
     graph_html = fig.to_html(full_html=False, include_plotlyjs='cdn')
     
-    # AIインサイト
     ai_html = generate_ai_insight(config['name'], spot_price, call_wall_strike, put_wall_strike, zero_gamma_strike, regime)
 
-    # HTML生成
     html_content = f"""
     <!DOCTYPE html>
     <html lang="ja" data-theme="dark">
@@ -320,10 +312,15 @@ def process_asset(asset_key, config):
     print(f"[+] Successfully generated {config['filename']}")
 
 def main():
-    for key, config in ASSET_CONFIG.items():
-        print(f"[*] Processing {config['name']}...")
+    assets = list(ASSET_CONFIG.items())
+    for i, (key, config) in enumerate(assets):
+        print(f"\n[*] Processing {config['name']} ({i+1}/{len(assets)})...")
         try:
             process_asset(key, config)
+            # 全体的なAPIスロットリング: バーストを避けるため各銘柄間にディレイを挟む
+            if i < len(assets) - 1:
+                print(f"[...] Throttling API requests. Waiting 8 seconds before next asset.")
+                time.sleep(8) 
         except Exception as e:
             print(f"Error:  Failed to process {config['name']}: {e}")
 
