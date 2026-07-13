@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 import google.generativeai as genai
 
 # ==========================================
-# 設定
+# 設定とグローバル変数
 # ==========================================
 ROOT_DIR = Path(__file__).parent.resolve()
 DOCS_DIR = ROOT_DIR / "docs"
@@ -27,6 +27,8 @@ ASSET_CONFIG = {
     "ZC": {"name": "トウモロコシ (ZC)", "ticker": "ZC=F", "multiplier": 50, "filename": "zc.html"},
     "ZW": {"name": "小麦 (ZW)", "ticker": "ZW=F", "multiplier": 50, "filename": "zw.html"}
 }
+
+AVAILABLE_AI_MODEL = None
 
 # ==========================================
 # ヘルパー関数
@@ -68,8 +70,40 @@ def load_barchart_csv(asset_key):
     return df_sb, df_gk, expiry
 
 # ==========================================
-# AI インサイト生成 (Static Model & Strict Template)
+# AI インサイト生成 (動的モデル探索 & スナイプ)
 # ==========================================
+def get_best_ai_model():
+    global AVAILABLE_AI_MODEL
+    if AVAILABLE_AI_MODEL:
+        return AVAILABLE_AI_MODEL
+        
+    try:
+        # 利用可能なモデルを動的取得
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # 2.5-flash (20回制限) や高コストモデルを避け、1.5-flash (1500回制限) を優先的にスナイプ
+        preferred_patterns = [
+            "models/gemini-1.5-flash", "gemini-1.5-flash", 
+            "models/gemini-1.5-flash-8b", "gemini-1.5-flash-8b",
+            "models/gemini-1.5-pro", "gemini-1.5-pro"
+        ]
+        
+        for pattern in preferred_patterns:
+            if pattern in available_models:
+                AVAILABLE_AI_MODEL = pattern
+                print(f"[*] AI Model Selected: {AVAILABLE_AI_MODEL}")
+                break
+                
+        # 見つからなかった場合のフォールバック
+        if not AVAILABLE_AI_MODEL and available_models:
+            AVAILABLE_AI_MODEL = available_models[0]
+            print(f"[*] AI Model Fallback: {AVAILABLE_AI_MODEL}")
+            
+        return AVAILABLE_AI_MODEL
+    except Exception as e:
+        print(f"[!] Error fetching models: {e}")
+        return "gemini-1.5-flash" # 最終フォールバック
+
 def generate_ai_insight(asset_name, spot, call_wall, put_wall, zero_gamma, regime):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -110,30 +144,29 @@ Zero-Gamma: {zero_gamma}
 </div>
 """
     try:
-        # 動的探索を廃止し、無料枠（1500回/日）の多い1.5-flashを明示的に指定。
-        # 1日20回制限で即死する2.5-flashへの誤爆を完全に防ぐ。
-        target_models = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]
-            
+        target_model_name = get_best_ai_model()
+        if not target_model_name:
+            return "<p style='color:red;'>[エラー] 利用可能なAIモデルが見つかりません。</p>"
+
+        model = genai.GenerativeModel(model_name=target_model_name)
+        
         last_error = "None"
-        for m_name in target_models:
-            model = genai.GenerativeModel(model_name=m_name)
-            
-            for attempt in range(2):
-                try:
-                    response = model.generate_content(prompt)
-                    # 不要なMarkdown装飾を強制パージ
-                    html_res = response.text.replace('```html', '').replace('```', '').strip()
-                    return html_res
-                except Exception as e:
-                    last_error = str(e)
-                    if "429" in last_error or "Quota" in last_error:
-                        print(f"[*] API Limit/Quota Hit on {m_name}. Waiting 60s... (Attempt {attempt+1})")
-                        time.sleep(60) # 429を踏んだら1分寝て再アタック（カナリアレーダー準拠の装甲）
-                    else:
-                        print(f"[-] Model {m_name} failed. Falling back to next model.")
-                        time.sleep(2)
-                        break 
-                        
+        for attempt in range(2):
+            try:
+                response = model.generate_content(prompt)
+                # 不要なMarkdown装飾を強制パージ
+                html_res = response.text.replace('```html', '').replace('```', '').strip()
+                return html_res
+            except Exception as e:
+                last_error = str(e)
+                if "429" in last_error or "Quota" in last_error:
+                    print(f"[*] API Limit/Quota Hit on {target_model_name}. Waiting 60s... (Attempt {attempt+1})")
+                    time.sleep(60) # 429を踏んだら1分寝て再アタック（スマートリトライ）
+                else:
+                    print(f"[-] Model {target_model_name} failed: {last_error}")
+                    time.sleep(2)
+                    break 
+                    
         return f"<p style='color:red;'>[AI生成エラー] 制限超過または一時的な障害です。<br>詳細: {last_error}</p>"
         
     except Exception as e:
@@ -153,7 +186,7 @@ def process_asset(asset_key, config):
     df_sb['Strike'] = df_sb['Strike'].apply(parse_strike)
     df_gk['Strike'] = df_gk['Strike'].apply(parse_strike)
     
-    # --- 【バグ修正】安全な列抽出と集約マージ (duplicate labels 回避) ---
+    # --- 安全な列抽出と集約マージ (duplicate labels 回避) ---
     
     # 1. Side-by-Side から Open Interest を抽出
     oi_cols = [c for c in df_sb.columns if 'Open Int' in c or 'OI' in c]
