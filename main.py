@@ -76,13 +76,13 @@ def generate_batched_insights(asset_summaries):
         return {k: {"error": "[エラー] APIキーが設定されていません。"} for k in asset_summaries.keys()}
         
     genai.configure(api_key=api_key)
-    # 生存が確認されている2.5-flashを使用（バッチ処理により1日20回制限を回避）
+    # 確実に生存している最新モデルを固定で指定
     target_model = "gemini-2.5-flash"
     
     prompt = f"""
 あなたは冷徹で論理的なクオンツ・アナリストです。
 以下の全銘柄のGEXデータに基づき、各銘柄ごとの作戦指令を考案し、指定されたJSONフォーマットにのみ従って出力してください。
-Markdown（```json 等）の装飾や挨拶は一切不要です。純粋なJSON文字列のみを出力してください。
+挨拶やMarkdownのコードブロック記号は一切不要です。純粋なJSONオブジェクトのみを出力してください。
 
 【データ】
 {json.dumps(asset_summaries, ensure_ascii=False, indent=2)}
@@ -94,12 +94,16 @@ Markdown（```json 等）の装飾や挨拶は一切不要です。純粋なJSON
     "entry": "サポートからの反発やレジスタンス突破時のエントリー目安を簡潔に記述",
     "exit": "サポート割れ等の厳格な損切り・撤退ラインを簡潔に記述"
   }},
-  "SI": {{ ... }},
-  "NG": {{ ... }},
-  "HG": {{ ... }},
-  "ZS": {{ ... }},
-  "ZC": {{ ... }},
-  "ZW": {{ ... }}
+  "SI": {{
+    "policy": "...",
+    "entry": "...",
+    "exit": "..."
+  }},
+  "NG": {{ "policy": "...", "entry": "...", "exit": "..." }},
+  "HG": {{ "policy": "...", "entry": "...", "exit": "..." }},
+  "ZS": {{ "policy": "...", "entry": "...", "exit": "..." }},
+  "ZC": {{ "policy": "...", "entry": "...", "exit": "..." }},
+  "ZW": {{ "policy": "...", "entry": "...", "exit": "..." }}
 }}
 """
     try:
@@ -108,20 +112,17 @@ Markdown（```json 等）の装飾や挨拶は一切不要です。純粋なJSON
         response = model.generate_content(prompt)
         res_text = response.text.strip()
         
-        # Markdownのコードブロック記号を安全にパージ
-        if res_text.startswith("```json"):
-            res_text = res_text[7:]
-        elif res_text.startswith("```"):
-            res_text = res_text[3:]
-        if res_text.endswith("```"):
-            res_text = res_text[:-3]
+        # 正規表現でJSON部分のみを抽出（AIの無駄な挨拶やMarkdownを完璧にパージ）
+        match = re.search(r'\{.*\}', res_text, re.DOTALL)
+        if match:
+            res_text = match.group(0)
             
-        insights = json.loads(res_text.strip())
+        insights = json.loads(res_text)
         print("[+] AI Insights successfully parsed.")
         return insights
     except Exception as e:
         print(f"[-] Batched AI generation failed: {e}")
-        return {k: {"error": f"[AI生成エラー] モデルの呼び出し、またはJSONパースに失敗しました: {e}"} for k in asset_summaries.keys()}
+        return {k: {"error": f"[AI生成エラー] 制限超過またはJSONパースに失敗しました。詳細: {e}"} for k in asset_summaries.keys()}
 
 def format_ai_html(asset_name, insight_data):
     if "error" in insight_data:
