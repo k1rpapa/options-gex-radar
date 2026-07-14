@@ -19,13 +19,13 @@ DOCS_DIR = ROOT_DIR / "docs"
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
 ASSET_CONFIG = {
-    "ES": {"name": "S&P 500 (ES)", "ticker": "ES=F", "multiplier": 50, "filename": "es.html"},
-    "SI": {"name": "シルバー (SI)", "ticker": "SI=F", "multiplier": 5000, "filename": "index.html"},
-    "NG": {"name": "天然ガス (NG)", "ticker": "NG=F", "multiplier": 10000, "filename": "ng.html"},
-    "HG": {"name": "銅 (HG)", "ticker": "HG=F", "multiplier": 25000, "filename": "hg.html"},
-    "ZS": {"name": "大豆 (ZS)", "ticker": "ZS=F", "multiplier": 50, "filename": "zs.html"},
-    "ZC": {"name": "トウモロコシ (ZC)", "ticker": "ZC=F", "multiplier": 50, "filename": "zc.html"},
-    "ZW": {"name": "小麦 (ZW)", "ticker": "ZW=F", "multiplier": 50, "filename": "zw.html"}
+    "ES": {"name": "🇺🇸 S&P 500 (ES)", "ticker": "ES=F", "multiplier": 50, "filename": "es.html"},
+    "SI": {"name": "🥈 シルバー (SI)", "ticker": "SI=F", "multiplier": 5000, "filename": "index.html"},
+    "NG": {"name": "🔥 天然ガス (NG)", "ticker": "NG=F", "multiplier": 10000, "filename": "ng.html"},
+    "HG": {"name": "🧱 銅 (HG)", "ticker": "HG=F", "multiplier": 25000, "filename": "hg.html"},
+    "ZS": {"name": "🌱 大豆 (ZS)", "ticker": "ZS=F", "multiplier": 50, "filename": "zs.html"},
+    "ZC": {"name": "🌽 トウモロコシ (ZC)", "ticker": "ZC=F", "multiplier": 50, "filename": "zc.html"},
+    "ZW": {"name": "🌾 小麦 (ZW)", "ticker": "ZW=F", "multiplier": 50, "filename": "zw.html"}
 }
 
 # ==========================================
@@ -240,19 +240,18 @@ def process_asset_data(asset_key, config):
     fig.add_trace(go.Bar(x=df_filtered['Strike'], y=df_filtered['Put_GEX'], name='Put GEX (サポート)', marker_color='#c598ff'), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_filtered['Strike'], y=df_filtered['Total_GEX'], mode='lines+markers', name='Net GEX', line=dict(color='white', width=2), marker=dict(size=4)), row=1, col=1)
     
-    fig.add_vline(x=spot_price, line_width=2, line_dash="solid", line_color="yellow", row=1, col=1, annotation_text=f"Current Spot<br>{spot_price}", annotation_position="bottom right", annotation_bgcolor="yellow", annotation_font_color="black")
-    fig.add_vline(x=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="red", row=1, col=1, annotation_text=f"Zero-Gamma<br>{zero_gamma_strike}", annotation_position="top left", annotation_bgcolor="red", annotation_font_color="white")
+    fig.add_vline(x=spot_price, line_width=2, line_dash="solid", line_color="yellow", row=1, col=1, annotation_text=f"Current Spot<br>{spot_price:.3f}", annotation_position="bottom right", annotation_bgcolor="yellow", annotation_font_color="black")
+    fig.add_vline(x=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="red", row=1, col=1, annotation_text=f"Zero-Gamma<br>{zero_gamma_strike:.3f}", annotation_position="top left", annotation_bgcolor="red", annotation_font_color="white")
     
-    fig.add_annotation(x=0.5, y=1.05, xref="paper", yref="paper", text=f"Dealer Net GEX Profile<br><span style='color:{regime_color}'>● {regime_str.split(' ')[0]} GAMMA REGIME</span>", showarrow=False, font=dict(size=14, color="white"), align="center")
-
     df_filtered['IV_Avg'] = (df_filtered['IV_Call'] + df_filtered['IV_Put']) / 2
     fig.add_trace(go.Scatter(x=df_filtered['Strike'], y=df_filtered['IV_Avg'], mode='lines+markers', name='IV', line=dict(color='orange', width=2)), row=2, col=1)
     
     fig.update_layout(
-        title=f"Quant Options Radar: {config['name']} | Expiry: {expiry}<br><sup style='font-size:12px;color:#c4c7c5'>As of: {spot_date}</sup>",
+        title=f"Quant Options Radar: {config['name']} | Expiry: {expiry}<br><span style='font-size:16px;color:{regime_color}'>● {regime_str}</span><br><sup style='font-size:12px;color:#c4c7c5'>As of: {spot_date}</sup>",
         template="plotly_dark", paper_bgcolor="#101218", plot_bgcolor="#101218",
         barmode='overlay', hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(t=100) # タイトル複数行化に伴う上部マージンの確保
     )
     fig.update_yaxes(title_text="GEX ($M)", row=1, col=1, gridcolor="#2d2f38")
     fig.update_yaxes(title_text="IV (%)", row=2, col=1, gridcolor="#2d2f38")
