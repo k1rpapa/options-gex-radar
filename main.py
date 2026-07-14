@@ -66,44 +66,34 @@ def load_barchart_csv(asset_key):
     
     return df_sb, df_gk, expiry
 
-# ==========================================
-# AI インサイト生成 (Batched Request Architecture)
-# ==========================================
 def generate_batched_insights(asset_summaries):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         print("[-] Error: GEMINI_API_KEY is missing.")
-        return {k: {"error": "[エラー] APIキーが設定されていません。"} for k in asset_summaries.keys()}
+        return {k: "<p style='color:#fe8983;'>[エラー] APIキーが設定されていません。</p>" for k in asset_summaries.keys()}
         
     genai.configure(api_key=api_key)
-    # 確実に生存している最新モデルを固定で指定
-    target_model = "gemini-2.5-flash"
+    target_model = "gemini-2.5-flash" # API制限を回避するためバッチ処理で1回だけコールする
     
     prompt = f"""
-あなたは冷徹で論理的なクオンツ・アナリストです。
-以下の全銘柄のGEXデータに基づき、各銘柄ごとの作戦指令を考案し、指定されたJSONフォーマットにのみ従って出力してください。
-挨拶やMarkdownのコードブロック記号は一切不要です。純粋なJSONオブジェクトのみを出力してください。
+あなたは金融工学とオプション取引に精通した「リード・クオンツアナリスト」です。
+以下の全銘柄のGEX（ガンマ・エクスポージャー）データに基づき、オプション初心者にも分かるように現在の重力場の分析と、実践的なトレード戦略を各銘柄ごとに考案し、JSONフォーマットで出力してください。
 
 【データ】
 {json.dumps(asset_summaries, ensure_ascii=False, indent=2)}
 
+【各銘柄のインサイト出力ルール (厳守事項)】
+- Webページに直接埋め込むため、各銘柄の値(Value)には純粋なHTMLの断片のみを文字列として出力すること。
+- 以下のHTMLタグを駆使して構造化すること: <h3>, <ul>, <li>, <p>, <strong>
+- ダークテーマのダッシュボードに映えるよう、重要な数値や方向性にはインラインCSSで色付けをすること。（HTMLの属性にはシングルクォート「'」を使用し、JSONを壊さないこと。例: <span style='color: #44c265;'>）
+- オプション初心者にも分かるように、現在のレジームに基づく「どこでエントリーし、どこで利確・損切りすべきか」の具体的なアクションプランにフォーカスすること。
+
 【出力すべきJSONフォーマット】
+Markdownのコードブロック記号(```jsonなど)や挨拶は一切不要です。純粋なJSONオブジェクトのみを出力してください。
 {{
-  "ES": {{
-    "policy": "現状のレジームと価格位置に基づく基本方針を1文で記述",
-    "entry": "サポートからの反発やレジスタンス突破時のエントリー目安を簡潔に記述",
-    "exit": "サポート割れ等の厳格な損切り・撤退ラインを簡潔に記述"
-  }},
-  "SI": {{
-    "policy": "...",
-    "entry": "...",
-    "exit": "..."
-  }},
-  "NG": {{ "policy": "...", "entry": "...", "exit": "..." }},
-  "HG": {{ "policy": "...", "entry": "...", "exit": "..." }},
-  "ZS": {{ "policy": "...", "entry": "...", "exit": "..." }},
-  "ZC": {{ "policy": "...", "entry": "...", "exit": "..." }},
-  "ZW": {{ "policy": "...", "entry": "...", "exit": "..." }}
+  "ES": "<h3>S&P 500 (ES) 分析</h3><ul><li>...</li></ul>",
+  "SI": "<h3>シルバー (SI) 分析</h3><ul><li>...</li></ul>",
+  ...
 }}
 """
     try:
@@ -118,47 +108,18 @@ def generate_batched_insights(asset_summaries):
             res_text = match.group(0)
             
         insights = json.loads(res_text)
-        print("[+] AI Insights successfully parsed.")
+        print("[+] AI Insights successfully generated and parsed.")
         return insights
     except Exception as e:
         print(f"[-] Batched AI generation failed: {e}")
-        return {k: {"error": f"[AI生成エラー] 制限超過またはJSONパースに失敗しました。詳細: {e}"} for k in asset_summaries.keys()}
+        err_msg = f"<p style='color:#fe8983;'>[AI生成エラー] 制限超過または一時的な障害です。詳細: {e}</p>"
+        return {k: err_msg for k in asset_summaries.keys()}
 
-def format_ai_html(asset_name, insight_data):
-    if "error" in insight_data:
-        return f"<p style='color:#fe8983;'>{insight_data['error']}</p>"
-
-    policy = insight_data.get("policy", "データのパースに失敗しました。")
-    entry = insight_data.get("entry", "データのパースに失敗しました。")
-    exit_val = insight_data.get("exit", "データのパースに失敗しました。")
-
-    return f"""
-    <div style="background:#1a1d21; padding:16px; border-radius:8px; border-left:4px solid var(--primary); font-family:sans-serif; line-height:1.6; margin-top:20px;">
-        <h3 style="margin-top:0; color:#e0e0e0; font-size:16px; border-bottom:1px solid #333; padding-bottom:8px;">{asset_name} GEX オペレーション指令</h3>
-        <div style="margin-bottom:12px;">
-            <span style="background:rgba(20, 108, 46, 0.3); color:#44c265; padding:4px 8px; border-radius:4px; font-weight:bold; font-size:12px; margin-right:8px;">基本方針</span>
-            <span style="color:#c4c7c5; font-size:14px;">{policy}</span>
-        </div>
-        <div style="margin-bottom:12px;">
-            <span style="background:rgba(11, 87, 208, 0.3); color:#76acff; padding:4px 8px; border-radius:4px; font-weight:bold; font-size:12px; margin-right:8px;">エントリー</span>
-            <span style="color:#c4c7c5; font-size:14px;">{entry}</span>
-        </div>
-        <div>
-            <span style="background:rgba(179, 38, 30, 0.3); color:#fe8983; padding:4px 8px; border-radius:4px; font-weight:bold; font-size:12px; margin-right:8px;">撤退ライン</span>
-            <span style="color:#c4c7c5; font-size:14px;">{exit_val}</span>
-        </div>
-    </div>
-    """
-
-# ==========================================
-# コア処理 (データ計算とPlotlyグラフ生成)
-# ==========================================
 def process_asset_data(asset_key, config):
     df_sb, df_gk, expiry = load_barchart_csv(asset_key)
     if df_sb is None:
         raise FileNotFoundError(f"CSV files not found for {asset_key}")
         
-    # --- Index-based Column Extraction (重複ラベルエラー回避) ---
     df_sb.columns = [str(c).strip() for c in df_sb.columns]
     df_gk.columns = [str(c).strip() for c in df_gk.columns]
     
@@ -190,7 +151,6 @@ def process_asset_data(asset_key, config):
         df_gk['IV_Call'] = 0.0
         df_gk['IV_Put'] = 0.0
 
-    # 重複列を排除してStrikeで集約
     df_sb_agg = df_sb.groupby('Strike', as_index=False)[['Call_OpenInt', 'Put_OpenInt']].sum()
     df_gk_agg = df_gk.groupby('Strike', as_index=False)[['Gamma_Call', 'Gamma_Put', 'IV_Call', 'IV_Put']].max()
 
@@ -201,7 +161,6 @@ def process_asset_data(asset_key, config):
     df_merged['Put_GEX'] = df_merged['Gamma_Put'] * df_merged['Put_OpenInt'] * mult * 100 * -1 / 1e6 
     df_merged['Total_GEX'] = df_merged['Call_GEX'] + df_merged['Put_GEX']
     
-    # スポット価格取得 (週末対策 period="5d")
     spot_price = 0.0
     spot_date = datetime.now().strftime('%m-%d-%Y')
     try:
@@ -223,7 +182,6 @@ def process_asset_data(asset_key, config):
     if df_filtered.empty:
         df_filtered = df_merged.copy()
 
-    # --- Zero-Gamma 算出 (線形補間) ---
     df_sorted = df_filtered.sort_values('Strike').reset_index(drop=True)
     df_sorted['Total_OI'] = df_sorted['Call_OpenInt'] + df_sorted['Put_OpenInt']
     valid_mask = df_sorted['Total_OI'] > df_sorted['Total_OI'].max() * 0.05 
@@ -251,22 +209,31 @@ def process_asset_data(asset_key, config):
     else:
         zero_gamma_strike = spot_price
 
-    call_wall_strike = df_filtered.loc[df_filtered['Call_GEX'].idxmax(), 'Strike']
-    put_wall_strike = df_filtered.loc[df_filtered['Put_GEX'].idxmin(), 'Strike']
+    # ユーザー要望: Call/Put Wall トップ2の抽出
+    call_walls_df = df_filtered[df_filtered['Call_GEX'] > 0].nlargest(2, 'Call_GEX')[['Strike', 'Call_GEX']]
+    put_walls_df = df_filtered[df_filtered['Put_GEX'] < 0].nsmallest(2, 'Put_GEX')[['Strike', 'Put_GEX']]
     
-    regime = "POSITIVE GAMMA REGIME (押し目買い優位)" if spot_price > zero_gamma_strike else "NEGATIVE GAMMA REGIME (パニック売り警戒)"
-    regime_color = "#44c265" if spot_price > zero_gamma_strike else "#fe8983"
+    call_walls = call_walls_df.to_dict('records')
+    put_walls = put_walls_df.to_dict('records')
     
-    # AIプロンプト用のデータサマリー構築
+    # 欠損時フォールバック
+    while len(call_walls) < 2: call_walls.append({"Strike": 0.0, "Call_GEX": 0.0})
+    while len(put_walls) < 2: put_walls.append({"Strike": 0.0, "Put_GEX": 0.0})
+    
+    is_positive = spot_price > zero_gamma_strike
+    regime_str = "POSITIVE (押し目買い・レンジ優位)" if is_positive else "NEGATIVE (ブレイクアウト・パニック売り警戒)"
+    regime_color = "#44c265" if is_positive else "#fe8983"
+    
+    # AIプロンプト用のデータサマリー構築 (ユーザーの旧プロンプトの構成を再現)
     data_summary = {
-        "spot": spot_price,
-        "call_wall": call_wall_strike,
-        "put_wall": put_wall_strike,
+        "asset_name": config['name'],
+        "spot": round(spot_price, 3),
         "zero_gamma": zero_gamma_strike,
-        "regime": regime
+        "regime": regime_str,
+        "call_walls": call_walls,
+        "put_walls": put_walls
     }
     
-    # --- グラフ描画 ---
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
     
     fig.add_trace(go.Bar(x=df_filtered['Strike'], y=df_filtered['Call_GEX'], name='Call GEX (レジスタンス)', marker_color='#06bbdf'), row=1, col=1)
@@ -276,7 +243,7 @@ def process_asset_data(asset_key, config):
     fig.add_vline(x=spot_price, line_width=2, line_dash="solid", line_color="yellow", row=1, col=1, annotation_text=f"Current Spot<br>{spot_price}", annotation_position="bottom right", annotation_bgcolor="yellow", annotation_font_color="black")
     fig.add_vline(x=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="red", row=1, col=1, annotation_text=f"Zero-Gamma<br>{zero_gamma_strike}", annotation_position="top left", annotation_bgcolor="red", annotation_font_color="white")
     
-    fig.add_annotation(x=0.5, y=1.05, xref="paper", yref="paper", text=f"Dealer Net GEX Profile<br><span style='color:{regime_color}'>● {regime}</span>", showarrow=False, font=dict(size=14, color="white"), align="center")
+    fig.add_annotation(x=0.5, y=1.05, xref="paper", yref="paper", text=f"Dealer Net GEX Profile<br><span style='color:{regime_color}'>● {regime_str.split(' ')[0]} GAMMA REGIME</span>", showarrow=False, font=dict(size=14, color="white"), align="center")
 
     df_filtered['IV_Avg'] = (df_filtered['IV_Call'] + df_filtered['IV_Put']) / 2
     fig.add_trace(go.Scatter(x=df_filtered['Strike'], y=df_filtered['IV_Avg'], mode='lines+markers', name='IV', line=dict(color='orange', width=2)), row=2, col=1)
@@ -299,29 +266,30 @@ def main():
     graphs = {}
     asset_summaries = {}
     
-    # フェーズ1: 全アセットのデータ計算とグラフ生成
     for key, config in ASSET_CONFIG.items():
-        print(f"[*] Processing data for {config['name']}...")
+        print(f"[*] Processing {config['name']}...")
         try:
             graph_html, summary, _ = process_asset_data(key, config)
             graphs[key] = graph_html
             asset_summaries[key] = summary
         except Exception as e:
-            print(f"[-] Error processing {config['name']}: {e}")
+            print(f"[-] Error: Failed to process {config['name']}: {e}")
             graphs[key] = f"<p style='color:red;'>データ処理エラー: {e}</p>"
 
-    # フェーズ2: AIへのバッチリクエスト (1リクエストで全銘柄処理)
-    print("\n[*] Sending batched request to Gemini API...")
+    print("\n[*] Sending batched request to Gemini API (JSON format with embedded HTML)...")
     ai_insights = {}
     if asset_summaries:
         ai_insights = generate_batched_insights(asset_summaries)
 
-    # フェーズ3: プレゼンテーション結合とHTML出力
     for key, config in ASSET_CONFIG.items():
         print(f"[*] Building HTML for {config['name']}...")
         graph_html = graphs.get(key, "")
-        insight_data = ai_insights.get(key, {"error": "インサイトデータの取得に失敗しました。"})
-        ai_html = format_ai_html(config['name'], insight_data)
+        
+        # JSONからHTML断片を抽出 (エラー時はフォールバック)
+        insight_content = ai_insights.get(key, "<p style='color:#fe8983;'>インサイトデータの取得に失敗しました。</p>")
+        if isinstance(insight_content, dict):
+            # APIエラー等の場合は辞書でエラーメッセージが返る
+            insight_content = insight_content.get("error", str(insight_content))
 
         html_content = f"""
         <!DOCTYPE html>
@@ -337,7 +305,12 @@ def main():
                 .nav-tabs a.active {{ background: #0b57d0; color: white; font-weight: bold; }}
                 .container {{ max-width: 1400px; margin: 0 auto; padding: 20px; }}
                 .ai-panel {{ margin-top: 30px; border-top: 1px solid #2d2f38; padding-top: 20px; }}
-                .ai-header {{ color: #f9ab00; font-weight: bold; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }}
+                .ai-header {{ color: #f9ab00; font-weight: bold; font-size: 14px; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }}
+                /* AIが生成するHTML用のベーススタイル */
+                .ai-content {{ background: #1a1d21; padding: 20px; border-radius: 8px; border-left: 4px solid var(--primary); font-size: 14px; line-height: 1.6; color: #c4c7c5; }}
+                .ai-content h3 {{ color: #e0e0e0; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 8px; margin-top: 0; }}
+                .ai-content ul {{ padding-left: 20px; }}
+                .ai-content li {{ margin-bottom: 8px; }}
             </style>
         </head>
         <body>
@@ -349,7 +322,9 @@ def main():
                 {graph_html}
                 <div class="ai-panel">
                     <div class="ai-header">● DAILY QUANT INSIGHT (Powered by Gemini AI)</div>
-                    {ai_html}
+                    <div class="ai-content">
+                        {insight_content}
+                    </div>
                 </div>
             </div>
         </body>
