@@ -75,9 +75,14 @@ def generate_batched_insights(asset_summaries):
         
     genai.configure(api_key=api_key)
     
-    # 完全にモデルをハードコード (動的探索による 2.5-flash 罠の回避)
-    target_model = "gemini-1.5-flash"
-    print(f"[*] AI Model Hardcoded: {target_model}")
+    # バッチ処理により1回の実行につき1リクエストで済むため、
+    # 最も賢い最新の 2.5-flash（1日20回制限）をメインエンジンに復帰。
+    # APIの仕様変更に備えたフォールバック・アレイを定義。
+    models_to_try = [
+        "gemini-2.5-flash",
+        "gemini-1.5-pro-latest",
+        "gemini-1.5-flash-latest"
+    ]
     
     # 全アセットのデータを含んだプロンプトを構築
     prompt = f"""
@@ -91,33 +96,40 @@ def generate_batched_insights(asset_summaries):
 - Webページに直接埋め込むため、各銘柄の値(Value)には純粋なHTMLの断片のみを文字列として出力すること。
 - 以下のHTMLタグを駆使して構造化すること: <h3>, <ul>, <li>, <p>, <strong>
 - ダークテーマのダッシュボードに映えるよう、重要な数値や方向性にはインラインCSSで色付けをすること。（HTMLの属性にはシングルクォート「'」を使用し、JSONを壊さないこと。例: <span style='color: #44c265;'>）
-- オプション初心者にも分かるように、現在のレジームに基づく「どこでエントリーし、どこで利確・損切りすべきか」の具体的なアクションプランにフォーカスすること。
+- 各銘柄のデータに含まれる「Call Wall（レジスタンス）」「Put Wall（サポート）」の数値を具体的に引用しながら、現在のレジームに基づく「どこでエントリーし、どこで利確・損切りすべきか」の具体的なアクションプランにフォーカスすること。
 
 【出力すべきJSONフォーマット】
 Markdownのコードブロック記号(```jsonなど)や挨拶は一切不要です。純粋なJSONオブジェクトのみを出力してください。
 {{
-  "ES": "<h3>S&P 500 (ES) 分析</h3><ul><li>...</li></ul>",
-  "SI": "<h3>シルバー (SI) 分析</h3><ul><li>...</li></ul>",
+  "ES": "<h3>🇺🇸 S&P 500 (ES) 分析</h3><ul><li>...</li></ul>",
+  "SI": "<h3>🥈 シルバー (SI) 分析</h3><ul><li>...</li></ul>",
   ...
 }}
 """
-    try:
-        model = genai.GenerativeModel(model_name=target_model)
-        response = model.generate_content(prompt)
-        res_text = response.text.strip()
-        
-        # 正規表現でJSON部分のみを抽出（AIの無駄な挨拶やMarkdownを完璧にパージ）
-        match = re.search(r'\{.*\}', res_text, re.DOTALL)
-        if match:
-            res_text = match.group(0)
+    
+    last_error = None
+    for target_model in models_to_try:
+        print(f"[*] Trying AI Model: {target_model}...")
+        try:
+            model = genai.GenerativeModel(model_name=target_model)
+            response = model.generate_content(prompt)
+            res_text = response.text.strip()
             
-        insights = json.loads(res_text)
-        print("[+] AI Insights successfully generated via batch request.")
-        return insights
-    except Exception as e:
-        print(f"[-] Batched AI generation failed: {e}")
-        err_msg = f"<p style='color:#fe8983;'>[AI生成エラー] 制限超過または一時的な障害です。<br>詳細: {e}</p>"
-        return {k: err_msg for k in asset_summaries.keys()}
+            # 正規表現でJSON部分のみを抽出（AIの無駄な挨拶やMarkdownを完璧にパージ）
+            match = re.search(r'\{.*\}', res_text, re.DOTALL)
+            if match:
+                res_text = match.group(0)
+                
+            insights = json.loads(res_text)
+            print(f"[+] AI Insights successfully generated via {target_model}.")
+            return insights
+        except Exception as e:
+            print(f"[-] Model {target_model} failed: {e}")
+            last_error = e
+            
+    print("[-] All AI models failed in the fallback array.")
+    err_msg = f"<p style='color:#fe8983;'>[AI生成エラー] 制限超過またはAPIの仕様変更による一時的な障害です。<br>詳細: {last_error}</p>"
+    return {k: err_msg for k in asset_summaries.keys()}
 
 def process_asset_data(asset_key, config):
     df_sb, df_gk, expiry = load_barchart_csv(asset_key)
@@ -130,7 +142,7 @@ def process_asset_data(asset_key, config):
     df_sb['Strike'] = df_sb['Strike'].apply(parse_strike)
     df_gk['Strike'] = df_gk['Strike'].apply(parse_strike)
     
-    # 堅牢なインデックスベースの列抽出 (重複ラベル回避)
+    # 堅牢なインデックスベースの列抽出
     oi_idx = [i for i, col in enumerate(df_sb.columns) if 'Open Int' in col or 'OI' in col]
     if len(oi_idx) >= 2:
         df_sb['Call_OpenInt'] = df_sb.iloc[:, oi_idx[0]].apply(clean_val)
@@ -227,7 +239,6 @@ def process_asset_data(asset_key, config):
     regime_str = "POSITIVE GAMMA REGIME (押し目買い優位)" if is_positive else "NEGATIVE GAMMA REGIME (パニック売り警戒)"
     regime_color = "#44c265" if is_positive else "#fe8983"
     
-    # バッチ処理用JSONデータの構築
     data_summary = {
         "asset_name": config['name'],
         "spot": round(spot_price, 3),
@@ -249,6 +260,7 @@ def process_asset_data(asset_key, config):
     df_filtered['IV_Avg'] = (df_filtered['IV_Call'] + df_filtered['IV_Put']) / 2
     fig.add_trace(go.Scatter(x=df_filtered['Strike'], y=df_filtered['IV_Avg'], mode='lines+markers', name='IV', line=dict(color='orange', width=2)), row=2, col=1)
     
+    # タイトル部分にレジーム表記を統合し、グラフ内のテキスト重なりを解消
     fig.update_layout(
         title=f"Quant Options Radar: {config['name']} | Expiry: {expiry}<br><sup style='font-size:12px;color:#c4c7c5'>As of: {spot_date}</sup><br><br><span style='font-size:16px;color:{regime_color}'>● {regime_str}</span>",
         template="plotly_dark", paper_bgcolor="#101218", plot_bgcolor="#101218",
