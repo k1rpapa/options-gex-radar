@@ -25,7 +25,8 @@ ASSET_CONFIG = {
     "HG": {"name": "🧱 銅 (HG)", "ticker": "HG=F", "multiplier": 25000, "filename": "hg.html"},
     "ZS": {"name": "🌱 大豆 (ZS)", "ticker": "ZS=F", "multiplier": 50, "filename": "zs.html"},
     "ZC": {"name": "🌽 トウモロコシ (ZC)", "ticker": "ZC=F", "multiplier": 50, "filename": "zc.html"},
-    "ZW": {"name": "🌾 小麦 (ZW)", "ticker": "ZW=F", "multiplier": 50, "filename": "zw.html"}
+    "ZW": {"name": "🌾 小麦 (ZW)", "ticker": "ZW=F", "multiplier": 50, "filename": "zw.html"},
+    "SB": {"name": "🍬 砂糖 (SB)", "ticker": "SB=F", "multiplier": 1120, "filename": "sb.html"}
 }
 
 # ==========================================
@@ -73,13 +74,17 @@ def generate_batched_insights(asset_summaries):
         return {k: "<p style='color:#fe8983;'>[エラー] APIキーが設定されていません。</p>" for k in asset_summaries.keys()}
         
     genai.configure(api_key=api_key)
-    target_model = "gemini-2.5-flash" # API制限を回避するためバッチ処理で1回だけコールする
     
+    # 完全にモデルをハードコード (動的探索による 2.5-flash 罠の回避)
+    target_model = "gemini-1.5-flash"
+    print(f"[*] AI Model Hardcoded: {target_model}")
+    
+    # 全アセットのデータを含んだプロンプトを構築
     prompt = f"""
 あなたは金融工学とオプション取引に精通した「リード・クオンツアナリスト」です。
-以下の全銘柄のGEX（ガンマ・エクスポージャー）データに基づき、オプション初心者にも分かるように現在の重力場の分析と、実践的なトレード戦略を各銘柄ごとに考案し、JSONフォーマットで出力してください。
+以下の全銘柄の最新のGEX（ガンマ・エクスポージャー）データに基づき、オプション初心者にも分かるように現在の重力場の分析と、実践的なトレード戦略をJSONフォーマットで出力してください。
 
-【データ】
+【全銘柄のデータ】
 {json.dumps(asset_summaries, ensure_ascii=False, indent=2)}
 
 【各銘柄のインサイト出力ルール (厳守事項)】
@@ -97,7 +102,6 @@ Markdownのコードブロック記号(```jsonなど)や挨拶は一切不要で
 }}
 """
     try:
-        print(f"[*] Dispatching batched request to {target_model}...")
         model = genai.GenerativeModel(model_name=target_model)
         response = model.generate_content(prompt)
         res_text = response.text.strip()
@@ -108,11 +112,11 @@ Markdownのコードブロック記号(```jsonなど)や挨拶は一切不要で
             res_text = match.group(0)
             
         insights = json.loads(res_text)
-        print("[+] AI Insights successfully generated and parsed.")
+        print("[+] AI Insights successfully generated via batch request.")
         return insights
     except Exception as e:
         print(f"[-] Batched AI generation failed: {e}")
-        err_msg = f"<p style='color:#fe8983;'>[AI生成エラー] 制限超過または一時的な障害です。詳細: {e}</p>"
+        err_msg = f"<p style='color:#fe8983;'>[AI生成エラー] 制限超過または一時的な障害です。<br>詳細: {e}</p>"
         return {k: err_msg for k in asset_summaries.keys()}
 
 def process_asset_data(asset_key, config):
@@ -126,6 +130,7 @@ def process_asset_data(asset_key, config):
     df_sb['Strike'] = df_sb['Strike'].apply(parse_strike)
     df_gk['Strike'] = df_gk['Strike'].apply(parse_strike)
     
+    # 堅牢なインデックスベースの列抽出 (重複ラベル回避)
     oi_idx = [i for i, col in enumerate(df_sb.columns) if 'Open Int' in col or 'OI' in col]
     if len(oi_idx) >= 2:
         df_sb['Call_OpenInt'] = df_sb.iloc[:, oi_idx[0]].apply(clean_val)
@@ -209,22 +214,20 @@ def process_asset_data(asset_key, config):
     else:
         zero_gamma_strike = spot_price
 
-    # ユーザー要望: Call/Put Wall トップ2の抽出
     call_walls_df = df_filtered[df_filtered['Call_GEX'] > 0].nlargest(2, 'Call_GEX')[['Strike', 'Call_GEX']]
     put_walls_df = df_filtered[df_filtered['Put_GEX'] < 0].nsmallest(2, 'Put_GEX')[['Strike', 'Put_GEX']]
     
     call_walls = call_walls_df.to_dict('records')
     put_walls = put_walls_df.to_dict('records')
     
-    # 欠損時フォールバック
     while len(call_walls) < 2: call_walls.append({"Strike": 0.0, "Call_GEX": 0.0})
     while len(put_walls) < 2: put_walls.append({"Strike": 0.0, "Put_GEX": 0.0})
     
     is_positive = spot_price > zero_gamma_strike
-    regime_str = "POSITIVE (押し目買い・レンジ優位)" if is_positive else "NEGATIVE (ブレイクアウト・パニック売り警戒)"
+    regime_str = "POSITIVE GAMMA REGIME (押し目買い優位)" if is_positive else "NEGATIVE GAMMA REGIME (パニック売り警戒)"
     regime_color = "#44c265" if is_positive else "#fe8983"
     
-    # AIプロンプト用のデータサマリー構築 (ユーザーの旧プロンプトの構成を再現)
+    # バッチ処理用JSONデータの構築
     data_summary = {
         "asset_name": config['name'],
         "spot": round(spot_price, 3),
@@ -241,17 +244,17 @@ def process_asset_data(asset_key, config):
     fig.add_trace(go.Scatter(x=df_filtered['Strike'], y=df_filtered['Total_GEX'], mode='lines+markers', name='Net GEX', line=dict(color='white', width=2), marker=dict(size=4)), row=1, col=1)
     
     fig.add_vline(x=spot_price, line_width=2, line_dash="solid", line_color="yellow", row=1, col=1, annotation_text=f"Current Spot<br>{spot_price:.3f}", annotation_position="bottom right", annotation_bgcolor="yellow", annotation_font_color="black")
-    fig.add_vline(x=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="red", row=1, col=1, annotation_text=f"Zero-Gamma<br>{zero_gamma_strike:.3f}", annotation_position="top left", annotation_bgcolor="red", annotation_font_color="white")
+    fig.add_vline(x=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="red", row=1, col=1, annotation_text=f"Zero-Gamma<br>{zero_gamma_strike:.2f}", annotation_position="top left", annotation_bgcolor="red", annotation_font_color="white")
     
     df_filtered['IV_Avg'] = (df_filtered['IV_Call'] + df_filtered['IV_Put']) / 2
     fig.add_trace(go.Scatter(x=df_filtered['Strike'], y=df_filtered['IV_Avg'], mode='lines+markers', name='IV', line=dict(color='orange', width=2)), row=2, col=1)
     
     fig.update_layout(
-        title=f"Quant Options Radar: {config['name']} | Expiry: {expiry}<br><span style='font-size:16px;color:{regime_color}'>● {regime_str}</span><br><sup style='font-size:12px;color:#c4c7c5'>As of: {spot_date}</sup>",
+        title=f"Quant Options Radar: {config['name']} | Expiry: {expiry}<br><sup style='font-size:12px;color:#c4c7c5'>As of: {spot_date}</sup><br><br><span style='font-size:16px;color:{regime_color}'>● {regime_str}</span>",
         template="plotly_dark", paper_bgcolor="#101218", plot_bgcolor="#101218",
         barmode='overlay', hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(t=100) # タイトル複数行化に伴う上部マージンの確保
+        margin=dict(t=120)
     )
     fig.update_yaxes(title_text="GEX ($M)", row=1, col=1, gridcolor="#2d2f38")
     fig.update_yaxes(title_text="IV (%)", row=2, col=1, gridcolor="#2d2f38")
@@ -275,7 +278,7 @@ def main():
             print(f"[-] Error: Failed to process {config['name']}: {e}")
             graphs[key] = f"<p style='color:red;'>データ処理エラー: {e}</p>"
 
-    print("\n[*] Sending batched request to Gemini API (JSON format with embedded HTML)...")
+    print("\n[*] Dispatching batch request to Gemini AI...")
     ai_insights = {}
     if asset_summaries:
         ai_insights = generate_batched_insights(asset_summaries)
@@ -284,10 +287,8 @@ def main():
         print(f"[*] Building HTML for {config['name']}...")
         graph_html = graphs.get(key, "")
         
-        # JSONからHTML断片を抽出 (エラー時はフォールバック)
         insight_content = ai_insights.get(key, "<p style='color:#fe8983;'>インサイトデータの取得に失敗しました。</p>")
         if isinstance(insight_content, dict):
-            # APIエラー等の場合は辞書でエラーメッセージが返る
             insight_content = insight_content.get("error", str(insight_content))
 
         html_content = f"""
@@ -305,7 +306,6 @@ def main():
                 .container {{ max-width: 1400px; margin: 0 auto; padding: 20px; }}
                 .ai-panel {{ margin-top: 30px; border-top: 1px solid #2d2f38; padding-top: 20px; }}
                 .ai-header {{ color: #f9ab00; font-weight: bold; font-size: 14px; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }}
-                /* AIが生成するHTML用のベーススタイル */
                 .ai-content {{ background: #1a1d21; padding: 20px; border-radius: 8px; border-left: 4px solid var(--primary); font-size: 14px; line-height: 1.6; color: #c4c7c5; }}
                 .ai-content h3 {{ color: #e0e0e0; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 8px; margin-top: 0; }}
                 .ai-content ul {{ padding-left: 20px; }}
