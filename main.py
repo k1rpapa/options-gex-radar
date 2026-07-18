@@ -54,7 +54,7 @@ def load_barchart_csv(asset_key):
     gk_files = sorted(glob.glob(f"{prefix}*volatility-greeks*.csv"))
     
     if not sb_files or not gk_files:
-        return None, None, None
+        return None, None, None, None
         
     sb_path = sb_files[-1]
     gk_path = gk_files[-1]
@@ -62,10 +62,15 @@ def load_barchart_csv(asset_key):
     df_sb = pd.read_csv(sb_path)
     df_gk = pd.read_csv(gk_path)
     
+    # 満期日の抽出
     match = re.search(r'exp-(\d{2}_\d{2}_\d{2})', sb_path)
     expiry = match.group(1) if match else "Unknown"
     
-    return df_sb, df_gk, expiry
+    # ファイル名から「データ取得日（As of）」を正確に抽出するロジックを追加
+    date_match = re.search(r'-(\d{2}-\d{2}-\d{4})\.csv', sb_path)
+    as_of_date = date_match.group(1) if date_match else None
+    
+    return df_sb, df_gk, expiry, as_of_date
 
 def generate_batched_insights(asset_summaries):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -132,7 +137,7 @@ Markdownのコードブロック記号(```jsonなど)や挨拶は一切不要で
     return {k: err_msg for k in asset_summaries.keys()}
 
 def process_asset_data(asset_key, config):
-    df_sb, df_gk, expiry = load_barchart_csv(asset_key)
+    df_sb, df_gk, expiry, file_as_of = load_barchart_csv(asset_key)
     if df_sb is None:
         raise FileNotFoundError(f"CSV files not found for {asset_key}")
         
@@ -179,17 +184,20 @@ def process_asset_data(asset_key, config):
     df_merged['Total_GEX'] = df_merged['Call_GEX'] + df_merged['Put_GEX']
     
     spot_price = 0.0
-    spot_date = datetime.now().strftime('%m-%d-%Y')
+    yf_date = datetime.now().strftime('%m-%d-%Y')
     try:
         hist = yf.Ticker(config['ticker']).history(period="5d")
         if not hist.empty:
             spot_price = float(hist['Close'].iloc[-1])
-            spot_date = hist.index[-1].strftime('%m-%d-%Y')
+            yf_date = hist.index[-1].strftime('%m-%d-%Y')
     except Exception as e:
         print(f"Warning: Failed to fetch spot price for {config['ticker']}: {e}")
         
     if spot_price == 0.0:
         spot_price = df_merged['Strike'].median()
+
+    # CSVファイル名から抽出した日付を最優先とし、データの鮮度を正確に反映
+    spot_date = file_as_of if file_as_of else yf_date
 
     min_strike = spot_price * 0.8
     max_strike = spot_price * 1.2
