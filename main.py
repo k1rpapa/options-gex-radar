@@ -20,13 +20,15 @@ DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
 ASSET_CONFIG = {
     "ES": {"name": "🇺🇸 S&P 500 (ES)", "ticker": "ES=F", "multiplier": 50, "filename": "es.html"},
+    "NQ": {"name": "💻 NASDAQ 100 (NQ)", "ticker": "NQ=F", "multiplier": 20, "filename": "nq.html"},
     "SI": {"name": "🥈 シルバー (SI)", "ticker": "SI=F", "multiplier": 5000, "filename": "index.html"},
     "NG": {"name": "🔥 天然ガス (NG)", "ticker": "NG=F", "multiplier": 10000, "filename": "ng.html"},
     "HG": {"name": "🧱 銅 (HG)", "ticker": "HG=F", "multiplier": 25000, "filename": "hg.html"},
     "ZS": {"name": "🌱 大豆 (ZS)", "ticker": "ZS=F", "multiplier": 50, "filename": "zs.html"},
     "ZC": {"name": "🌽 トウモロコシ (ZC)", "ticker": "ZC=F", "multiplier": 50, "filename": "zc.html"},
     "ZW": {"name": "🌾 小麦 (ZW)", "ticker": "ZW=F", "multiplier": 50, "filename": "zw.html"},
-    "SB": {"name": "🍬 砂糖 (SB)", "ticker": "SB=F", "multiplier": 1120, "filename": "sb.html"}
+    "SB": {"name": "🍬 砂糖 (SB)", "ticker": "SB=F", "multiplier": 1120, "filename": "sb.html"},
+    "HE": {"name": "🐷 豚肉 (HE)", "ticker": "HE=F", "multiplier": 400, "filename": "he.html"}
 }
 
 # ==========================================
@@ -66,7 +68,7 @@ def load_barchart_csv(asset_key):
     match = re.search(r'exp-(\d{2}_\d{2}_\d{2})', sb_path)
     expiry = match.group(1) if match else "Unknown"
     
-    # ファイル名から「データ取得日（As of）」を正確に抽出するロジックを追加
+    # ファイル名から「データ取得日（As of）」を正確に抽出する
     date_match = re.search(r'-(\d{2}-\d{2}-\d{4})\.csv', sb_path)
     as_of_date = date_match.group(1) if date_match else None
     
@@ -81,7 +83,7 @@ def generate_batched_insights(asset_summaries):
     genai.configure(api_key=api_key)
     
     # バッチ処理により1回の実行につき1リクエストで済むため、
-    # 最も賢い最新の 2.5-flash（1日20回制限）をメインエンジンに復帰。
+    # 最も賢い最新の 2.5-flash（1日20回制限）をメインエンジンに据える。
     # APIの仕様変更に備えたフォールバック・アレイを定義。
     models_to_try = [
         "gemini-2.5-flash",
