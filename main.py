@@ -272,33 +272,39 @@ def process_asset_data(asset_key, config):
     fig.add_trace(go.Scatter(y=df_filtered['Strike'], x=df_filtered['IV_Avg'], mode='lines+markers', name='IV', line=dict(color='orange', width=2)), row=1, col=2)
     
     fig.update_layout(
-        title=dict(
-            text=f"Quant Options Radar: {config['name']} | Expiry: {expiry}<br><sup style='font-size:12px;color:#c4c7c5'>As of: {spot_date}</sup><br><span style='font-size:15px;color:{regime_color}'>● {regime_str}</span>",
-            x=0.01, xanchor='left'
-        ),
         template="plotly_dark", paper_bgcolor="#101218", plot_bgcolor="#101218",
         barmode='overlay', hovermode="y unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(t=120, b=40, l=60, r=40),
-        height=750
+        showlegend=False,
+        margin=dict(t=25, b=40, l=60, r=40),
+        height=680
     )
     fig.update_yaxes(title_text="Strike Price", row=1, col=1, gridcolor="#2d2f38")
     fig.update_xaxes(title_text="GEX ($M)", row=1, col=1, gridcolor="#2d2f38")
     fig.update_xaxes(title_text="IV (%)", row=1, col=2, gridcolor="#2d2f38")
 
     graph_html = fig.to_html(full_html=False, include_plotlyjs='cdn', config={'responsive': True})
-    return graph_html, data_summary, expiry
+    
+    header_info = {
+        "expiry": expiry,
+        "spot_date": spot_date,
+        "regime_str": regime_str,
+        "regime_color": regime_color,
+        "is_positive": is_positive
+    }
+    return graph_html, data_summary, header_info
 
 def main():
     graphs = {}
     asset_summaries = {}
+    headers_info = {}
     
     for key, config in ASSET_CONFIG.items():
         print(f"[*] Processing {config['name']}...")
         try:
-            graph_html, summary, _ = process_asset_data(key, config)
+            graph_html, summary, header_info = process_asset_data(key, config)
             graphs[key] = graph_html
             asset_summaries[key] = summary
+            headers_info[key] = header_info
         except Exception as e:
             print(f"[-] Error: Failed to process {config['name']}: {e}")
             graphs[key] = f"<p style='color:red;'>データ処理エラー: {e}</p>"
@@ -311,6 +317,10 @@ def main():
     for key, config in ASSET_CONFIG.items():
         print(f"[*] Building HTML for {config['name']}...")
         graph_html = graphs.get(key, "")
+        info = headers_info.get(key, {
+            "expiry": "N/A", "spot_date": "N/A", 
+            "regime_str": "UNKNOWN", "regime_color": "#ffffff", "is_positive": True
+        })
         
         insight_content = ai_insights.get(key, "<p style='color:#fe8983;'>インサイトデータの取得に失敗しました。</p>")
         if isinstance(insight_content, dict):
@@ -321,6 +331,8 @@ def main():
             active_cls = "active" if k == key else ""
             tabs_links.append(f'<a href="{cfg["filename"]}" class="{active_cls}">{cfg["name"]}</a>')
         tabs_html = "\n                ".join(tabs_links)
+
+        regime_bg = "rgba(68, 194, 101, 0.15)" if info['is_positive'] else "rgba(254, 137, 131, 0.15)"
 
         # シンタックスハイライトを壊さないための安全な文字列結合
         html_content = (
@@ -341,13 +353,20 @@ def main():
             '        .dashboard-grid { display: flex; flex-direction: column; gap: 20px; width: 100%; }\n'
             '        .chart-panel { width: 100%; min-width: 0; }\n'
             '        .ai-panel { width: 100%; min-width: 0; border-top: 1px solid #2d2f38; padding-top: 15px; }\n'
+            '        .panel-header { margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }\n'
+            '        .chart-main-title { font-size: 18px; font-weight: bold; color: #ffffff; line-height: 1.3; }\n'
+            '        .chart-sub-info { font-size: 12px; color: #c4c7c5; }\n'
+            '        .regime-badge { display: inline-block; padding: 4px 10px; border-radius: 4px; font-size: 13px; font-weight: bold; align-self: flex-start; }\n'
+            '        .html-legend { display: flex; flex-wrap: wrap; gap: 15px; font-size: 12px; color: #c4c7c5; margin-top: 4px; }\n'
+            '        .legend-item { display: flex; align-items: center; gap: 6px; }\n'
+            '        .color-dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }\n'
             '        @media (min-width: 992px) {\n'
             '            .dashboard-grid { flex-direction: row; align-items: flex-start; justify-content: space-between; }\n'
             '            .chart-panel { width: 55%; flex: 0 0 55%; min-width: 0; position: sticky; top: 60px; }\n'
             '            .ai-panel { width: 43%; flex: 0 0 43%; min-width: 0; border-top: none; padding-top: 0; }\n'
             '        }\n'
-            '        .ai-header { color: #f9ab00; font-weight: bold; font-size: 14px; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }\n'
-            '        .ai-content { background: #1a1d21; padding: 20px; border-radius: 8px; border-left: 4px solid #0b57d0; font-size: 14px; line-height: 1.6; color: #c4c7c5; }\n'
+            '        .ai-header { color: #f9ab00; font-weight: bold; font-size: 16px; display: flex; align-items: center; gap: 8px; line-height: 1.3; margin-bottom: 0; }\n'
+            '        .ai-content { background: #1a1d21; padding: 20px; border-radius: 8px; border-left: 4px solid #0b57d0; font-size: 14px; line-height: 1.6; color: #c4c7c5; margin-top: 8px; }\n'
             '        .ai-content h3 { color: #e0e0e0; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 8px; margin-top: 0; }\n'
             '        .ai-content ul { padding-left: 20px; }\n'
             '        .ai-content li { margin-bottom: 8px; }\n'
@@ -361,10 +380,23 @@ def main():
             '    <div class="container">\n'
             '        <div class="dashboard-grid">\n'
             '            <div class="chart-panel">\n'
+            '                <div class="panel-header">\n'
+            f'                    <div class="chart-main-title">Quant Options Radar: {config["name"]}</div>\n'
+            f'                    <div class="chart-sub-info">Expiry: {info["expiry"]} &nbsp;|&nbsp; As of: {info["spot_date"]}</div>\n'
+            f'                    <div class="regime-badge" style="background:{regime_bg}; color:{info["regime_color"]}; border:1px solid {info["regime_color"]};">● {info["regime_str"]}</div>\n'
+            '                    <div class="html-legend">\n'
+            '                        <span class="legend-item"><span class="color-dot" style="background:#c598ff"></span>Put GEX (サポート)</span>\n'
+            '                        <span class="legend-item"><span class="color-dot" style="background:#06bbdf"></span>Call GEX (レジスタンス)</span>\n'
+            '                        <span class="legend-item"><span class="color-dot" style="background:#ffffff"></span>Net GEX</span>\n'
+            '                        <span class="legend-item"><span class="color-dot" style="background:#ffa500"></span>IV</span>\n'
+            '                    </div>\n'
+            '                </div>\n'
             f'                {graph_html}\n'
             '            </div>\n'
             '            <div class="ai-panel">\n'
-            '                <div class="ai-header">● DAILY QUANT INSIGHT (Powered by Gemini AI)</div>\n'
+            '                <div class="panel-header">\n'
+            '                    <div class="ai-header">● DAILY QUANT INSIGHT (Powered by Gemini AI)</div>\n'
+            '                </div>\n'
             '                <div class="ai-content">\n'
             f'                    {insight_content}\n'
             '                </div>\n'
