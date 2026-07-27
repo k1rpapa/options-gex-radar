@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 import pandas as pd
 import numpy as np
@@ -10,6 +11,11 @@ import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import google.generativeai as genai
+
+# Windowsコンソールでの文字化け・絵文字出力エラー防止
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
 
 # ==========================================
 # 設定とグローバル変数
@@ -247,29 +253,38 @@ def process_asset_data(asset_key, config):
         "put_walls": put_walls
     }
     
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
+    fig = make_subplots(
+        rows=1, cols=2, 
+        shared_yaxes=True, 
+        horizontal_spacing=0.03, 
+        column_widths=[0.72, 0.28],
+        subplot_titles=("GEX Option Ladder ($M)", "IV Profile (%)")
+    )
     
-    fig.add_trace(go.Bar(x=df_filtered['Strike'], y=df_filtered['Call_GEX'], name='Call GEX (レジスタンス)', marker_color='#06bbdf'), row=1, col=1)
-    fig.add_trace(go.Bar(x=df_filtered['Strike'], y=df_filtered['Put_GEX'], name='Put GEX (サポート)', marker_color='#c598ff'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_filtered['Strike'], y=df_filtered['Total_GEX'], mode='lines+markers', name='Net GEX', line=dict(color='white', width=2), marker=dict(size=4)), row=1, col=1)
+    fig.add_trace(go.Bar(y=df_filtered['Strike'], x=df_filtered['Put_GEX'], orientation='h', name='Put GEX (サポート)', marker_color='#c598ff'), row=1, col=1)
+    fig.add_trace(go.Bar(y=df_filtered['Strike'], x=df_filtered['Call_GEX'], orientation='h', name='Call GEX (レジスタンス)', marker_color='#06bbdf'), row=1, col=1)
+    fig.add_trace(go.Scatter(y=df_filtered['Strike'], x=df_filtered['Total_GEX'], mode='lines+markers', name='Net GEX', line=dict(color='white', width=2), marker=dict(size=4)), row=1, col=1)
     
-    fig.add_vline(x=spot_price, line_width=2, line_dash="solid", line_color="yellow", row=1, col=1, annotation_text=f"Current Spot<br>{spot_price:.3f}", annotation_position="bottom right", annotation_bgcolor="yellow", annotation_font_color="black")
-    fig.add_vline(x=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="red", row=1, col=1, annotation_text=f"Zero-Gamma<br>{zero_gamma_strike:.2f}", annotation_position="top left", annotation_bgcolor="red", annotation_font_color="white")
+    fig.add_hline(y=spot_price, line_width=2, line_dash="solid", line_color="yellow", row=1, col=1, annotation_text=f"Current Spot: {spot_price:.3f}", annotation_position="top right", annotation_bgcolor="yellow", annotation_font_color="black")
+    fig.add_hline(y=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="red", row=1, col=1, annotation_text=f"Zero-Gamma: {zero_gamma_strike:.2f}", annotation_position="bottom left", annotation_bgcolor="red", annotation_font_color="white")
     
     df_filtered['IV_Avg'] = (df_filtered['IV_Call'] + df_filtered['IV_Put']) / 2
-    fig.add_trace(go.Scatter(x=df_filtered['Strike'], y=df_filtered['IV_Avg'], mode='lines+markers', name='IV', line=dict(color='orange', width=2)), row=2, col=1)
+    fig.add_trace(go.Scatter(y=df_filtered['Strike'], x=df_filtered['IV_Avg'], mode='lines+markers', name='IV', line=dict(color='orange', width=2)), row=1, col=2)
     
     fig.update_layout(
-        title=f"Quant Options Radar: {config['name']} | Expiry: {expiry}<br><sup style='font-size:12px;color:#c4c7c5'>As of: {spot_date}</sup><br><br><span style='font-size:16px;color:{regime_color}'>● {regime_str}</span>",
+        title=dict(
+            text=f"Quant Options Radar: {config['name']} | Expiry: {expiry}<br><sup style='font-size:12px;color:#c4c7c5'>As of: {spot_date}</sup><br><span style='font-size:15px;color:{regime_color}'>● {regime_str}</span>",
+            x=0.01, xanchor='left'
+        ),
         template="plotly_dark", paper_bgcolor="#101218", plot_bgcolor="#101218",
-        barmode='overlay', hovermode="x unified",
+        barmode='overlay', hovermode="y unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(t=120)
+        margin=dict(t=120, b=40, l=60, r=40),
+        height=750
     )
-    fig.update_yaxes(title_text="GEX ($M)", row=1, col=1, gridcolor="#2d2f38")
-    fig.update_yaxes(title_text="IV (%)", row=2, col=1, gridcolor="#2d2f38")
-    fig.update_xaxes(title_text="Strike Price", row=2, col=1, gridcolor="#2d2f38")
-    fig.update_xaxes(gridcolor="#2d2f38", row=1, col=1)
+    fig.update_yaxes(title_text="Strike Price", row=1, col=1, gridcolor="#2d2f38")
+    fig.update_xaxes(title_text="GEX ($M)", row=1, col=1, gridcolor="#2d2f38")
+    fig.update_xaxes(title_text="IV (%)", row=1, col=2, gridcolor="#2d2f38")
 
     graph_html = fig.to_html(full_html=False, include_plotlyjs='cdn')
     return graph_html, data_summary, expiry
@@ -313,15 +328,23 @@ def main():
             '<html lang="ja" data-theme="dark">\n'
             '<head>\n'
             '    <meta charset="UTF-8">\n'
+            '    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
             f'    <title>Quant GEX Radar - {config["name"]}</title>\n'
             '    <style>\n'
             '        body { background-color: #101218; color: #ffffff; font-family: sans-serif; margin: 0; padding: 0; }\n'
-            '        .nav-tabs { background: #1a1d21; padding: 10px; display: flex; gap: 10px; overflow-x: auto; }\n'
+            '        .nav-tabs { background: #1a1d21; padding: 10px; display: flex; gap: 10px; overflow-x: auto; position: sticky; top: 0; z-index: 100; }\n'
             '        .nav-tabs a { color: #c4c7c5; text-decoration: none; padding: 8px 16px; border-radius: 4px; font-size: 14px; white-space: nowrap; }\n'
             '        .nav-tabs a:hover { background: #2d2f38; }\n'
             '        .nav-tabs a.active { background: #0b57d0; color: white; font-weight: bold; }\n'
-            '        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }\n'
-            '        .ai-panel { margin-top: 30px; border-top: 1px solid #2d2f38; padding-top: 20px; }\n'
+            '        .container { max-width: 1600px; margin: 0 auto; padding: 15px; }\n'
+            '        .dashboard-grid { display: flex; flex-direction: column; gap: 20px; }\n'
+            '        .chart-panel { width: 100%; }\n'
+            '        .ai-panel { width: 100%; border-top: 1px solid #2d2f38; padding-top: 15px; }\n'
+            '        @media (min-width: 992px) {\n'
+            '            .dashboard-grid { flex-direction: row; align-items: flex-start; }\n'
+            '            .chart-panel { flex: 1 1 56%; position: sticky; top: 60px; }\n'
+            '            .ai-panel { flex: 1 1 44%; border-top: none; padding-top: 0; }\n'
+            '        }\n'
             '        .ai-header { color: #f9ab00; font-weight: bold; font-size: 14px; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }\n'
             '        .ai-content { background: #1a1d21; padding: 20px; border-radius: 8px; border-left: 4px solid #0b57d0; font-size: 14px; line-height: 1.6; color: #c4c7c5; }\n'
             '        .ai-content h3 { color: #e0e0e0; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 8px; margin-top: 0; }\n'
@@ -335,11 +358,15 @@ def main():
             '        <a href="gex_trading_guide.html" style="margin-left:auto; color: #f9ab00;">■ 取引マニュアル</a>\n'
             '    </div>\n'
             '    <div class="container">\n'
-            f'        {graph_html}\n'
-            '        <div class="ai-panel">\n'
-            '            <div class="ai-header">● DAILY QUANT INSIGHT (Powered by Gemini AI)</div>\n'
-            '            <div class="ai-content">\n'
-            f'                {insight_content}\n'
+            '        <div class="dashboard-grid">\n'
+            '            <div class="chart-panel">\n'
+            f'                {graph_html}\n'
+            '            </div>\n'
+            '            <div class="ai-panel">\n'
+            '                <div class="ai-header">● DAILY QUANT INSIGHT (Powered by Gemini AI)</div>\n'
+            '                <div class="ai-content">\n'
+            f'                    {insight_content}\n'
+            '                </div>\n'
             '            </div>\n'
             '        </div>\n'
             '    </div>\n'
