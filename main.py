@@ -286,7 +286,7 @@ def process_asset_data(asset_key, config):
     fig.update_xaxes(title_text="GEX ($M)", row=1, col=1, gridcolor="#2d2f38")
     fig.update_xaxes(title_text="IV (%)", row=1, col=2, gridcolor="#2d2f38")
 
-    graph_html = fig.to_html(full_html=False, include_plotlyjs='cdn')
+    graph_html = fig.to_html(full_html=False, include_plotlyjs='cdn', config={'responsive': True})
     return graph_html, data_summary, expiry
 
 def main():
@@ -331,19 +331,20 @@ def main():
             '    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
             f'    <title>Quant GEX Radar - {config["name"]}</title>\n'
             '    <style>\n'
+            '        * { box-sizing: border-box; }\n'
             '        body { background-color: #101218; color: #ffffff; font-family: sans-serif; margin: 0; padding: 0; }\n'
             '        .nav-tabs { background: #1a1d21; padding: 10px; display: flex; gap: 10px; overflow-x: auto; position: sticky; top: 0; z-index: 100; }\n'
             '        .nav-tabs a { color: #c4c7c5; text-decoration: none; padding: 8px 16px; border-radius: 4px; font-size: 14px; white-space: nowrap; }\n'
             '        .nav-tabs a:hover { background: #2d2f38; }\n'
             '        .nav-tabs a.active { background: #0b57d0; color: white; font-weight: bold; }\n'
-            '        .container { max-width: 1600px; margin: 0 auto; padding: 15px; }\n'
-            '        .dashboard-grid { display: flex; flex-direction: column; gap: 20px; }\n'
-            '        .chart-panel { width: 100%; }\n'
-            '        .ai-panel { width: 100%; border-top: 1px solid #2d2f38; padding-top: 15px; }\n'
+            '        .container { max-width: 1800px; margin: 0 auto; padding: 15px; width: 100%; }\n'
+            '        .dashboard-grid { display: flex; flex-direction: column; gap: 20px; width: 100%; }\n'
+            '        .chart-panel { width: 100%; min-width: 0; }\n'
+            '        .ai-panel { width: 100%; min-width: 0; border-top: 1px solid #2d2f38; padding-top: 15px; }\n'
             '        @media (min-width: 992px) {\n'
-            '            .dashboard-grid { flex-direction: row; align-items: flex-start; }\n'
-            '            .chart-panel { flex: 1 1 56%; position: sticky; top: 60px; }\n'
-            '            .ai-panel { flex: 1 1 44%; border-top: none; padding-top: 0; }\n'
+            '            .dashboard-grid { flex-direction: row; align-items: flex-start; justify-content: space-between; }\n'
+            '            .chart-panel { width: 55%; flex: 0 0 55%; min-width: 0; position: sticky; top: 60px; }\n'
+            '            .ai-panel { width: 43%; flex: 0 0 43%; min-width: 0; border-top: none; padding-top: 0; }\n'
             '        }\n'
             '        .ai-header { color: #f9ab00; font-weight: bold; font-size: 14px; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }\n'
             '        .ai-content { background: #1a1d21; padding: 20px; border-radius: 8px; border-left: 4px solid #0b57d0; font-size: 14px; line-height: 1.6; color: #c4c7c5; }\n'
