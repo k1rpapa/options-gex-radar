@@ -181,9 +181,6 @@ def process_asset_data(asset_key, config):
     df_merged = df_gk_agg.merge(df_sb_agg, on='Strike', how='outer').fillna(0)
                          
     mult = config['multiplier']
-    df_merged['Call_GEX'] = df_merged['Gamma_Call'] * df_merged['Call_OpenInt'] * mult * 100 / 1e6 
-    df_merged['Put_GEX'] = df_merged['Gamma_Put'] * df_merged['Put_OpenInt'] * mult * 100 * -1 / 1e6 
-    df_merged['Total_GEX'] = df_merged['Call_GEX'] + df_merged['Put_GEX']
     
     spot_price = 0.0
     try:
@@ -196,18 +193,39 @@ def process_asset_data(asset_key, config):
     if spot_price == 0.0:
         spot_price = df_merged['Strike'].median()
 
+    # Standard 1% Dollar GEX ($M): Gamma * OI * Multiplier * (Spot^2 * 0.01) / 1e6
+    spot_scale = (spot_price ** 2) * 0.01 / 1e6
+    df_merged['Call_GEX'] = df_merged['Gamma_Call'] * df_merged['Call_OpenInt'] * mult * spot_scale
+    df_merged['Put_GEX'] = df_merged['Gamma_Put'] * df_merged['Put_OpenInt'] * mult * spot_scale * -1
+    df_merged['Total_GEX'] = df_merged['Call_GEX'] + df_merged['Put_GEX']
+    df_merged['Total_OI'] = df_merged['Call_OpenInt'] + df_merged['Put_OpenInt']
+
     spot_date = file_as_of if file_as_of else datetime.now().strftime('%m-%d-%Y')
 
-    min_strike = spot_price * 0.8
-    max_strike = spot_price * 1.2
-    margin = (max_strike - min_strike) * 0.1
-    df_filtered = df_merged[(df_merged['Strike'] >= min_strike - margin) & (df_merged['Strike'] <= max_strike + margin)].copy()
+    # Filter strikes: focus around Spot price (ATM +/- 15%)
+    min_strike = spot_price * 0.85
+    max_strike = spot_price * 1.15
+    df_near = df_merged[(df_merged['Strike'] >= min_strike) & (df_merged['Strike'] <= max_strike)].copy()
 
-    if df_filtered.empty:
-        df_filtered = df_merged.copy()
+    # Prune inactive strikes (0 OI and 0 GEX) to eliminate razor-thin bars and empty gaps
+    active_mask = (df_near['Total_OI'] > 0) | (df_near['Total_GEX'].abs() > 0.001)
+    df_active = df_near[active_mask].copy()
 
-    df_sorted = df_filtered.sort_values('Strike').reset_index(drop=True)
-    df_sorted['Total_OI'] = df_sorted['Call_OpenInt'] + df_sorted['Put_OpenInt']
+    # If active strikes in +/-15% is fewer than 12, expand to all active strikes
+    if len(df_active) < 12:
+        df_active = df_merged[(df_merged['Total_OI'] > 0) | (df_merged['Total_GEX'].abs() > 0.001)].copy()
+
+    if df_active.empty:
+        df_active = df_merged.copy()
+
+    # If there are still too many strikes (>32), pick the ~30 strikes closest to Spot for ideal ladder bar thickness
+    if len(df_active) > 32:
+        df_active['Dist_From_Spot'] = (df_active['Strike'] - spot_price).abs()
+        df_active = df_active.nsmallest(32, 'Dist_From_Spot').copy()
+
+    df_sorted = df_active.sort_values('Strike').reset_index(drop=True)
+    
+    # Calculate Zero Gamma Level
     valid_mask = df_sorted['Total_OI'] > df_sorted['Total_OI'].max() * 0.05 
     df_valid = df_sorted[valid_mask].reset_index(drop=True)
     
@@ -233,8 +251,10 @@ def process_asset_data(asset_key, config):
     else:
         zero_gamma_strike = spot_price
 
-    call_walls_df = df_filtered[df_filtered['Call_GEX'] > 0].nlargest(2, 'Call_GEX')[['Strike', 'Call_GEX']]
-    put_walls_df = df_filtered[df_filtered['Put_GEX'] < 0].nsmallest(2, 'Put_GEX')[['Strike', 'Put_GEX']]
+    call_walls_df = df_sorted[df_sorted['Call_GEX'] > 0].nlargest(2, 'Call_GEX')[['Strike', 'Call_GEX']].copy()
+    put_walls_df = df_sorted[df_sorted['Put_GEX'] < 0].nsmallest(2, 'Put_GEX')[['Strike', 'Put_GEX']].copy()
+    call_walls_df['Call_GEX'] = call_walls_df['Call_GEX'].round(2)
+    put_walls_df['Put_GEX'] = put_walls_df['Put_GEX'].round(2)
     
     call_walls = call_walls_df.to_dict('records')
     put_walls = put_walls_df.to_dict('records')
@@ -263,26 +283,89 @@ def process_asset_data(asset_key, config):
         subplot_titles=("GEX Option Ladder ($M)", "IV Profile (%)")
     )
     
-    fig.add_trace(go.Bar(y=df_filtered['Strike'], x=df_filtered['Put_GEX'], orientation='h', name='Put GEX (サポート)', marker_color='#c598ff'), row=1, col=1)
-    fig.add_trace(go.Bar(y=df_filtered['Strike'], x=df_filtered['Call_GEX'], orientation='h', name='Call GEX (レジスタンス)', marker_color='#06bbdf'), row=1, col=1)
-    fig.add_trace(go.Scatter(y=df_filtered['Strike'], x=df_filtered['Total_GEX'], mode='lines+markers', name='Net GEX', line=dict(color='white', width=2), marker=dict(size=4)), row=1, col=1)
+    # Put GEX Bar
+    fig.add_trace(go.Bar(
+        y=df_sorted['Strike'], 
+        x=df_sorted['Put_GEX'], 
+        orientation='h', 
+        name='Put GEX (サポート)', 
+        marker=dict(color='rgba(197, 152, 255, 0.85)', line=dict(color='#c598ff', width=1)),
+        hovertemplate='<b>Strike: %{y}</b><br>Put GEX: $%{x:.2f}M<br>Put OI: %{customdata[0]:,.0f}<extra></extra>',
+        customdata=df_sorted[['Put_OpenInt']].values
+    ), row=1, col=1)
     
-    fig.add_hline(y=spot_price, line_width=2, line_dash="solid", line_color="yellow", row=1, col=1, annotation_text=f"Current Spot: {spot_price:.3f}", annotation_position="top right", annotation_bgcolor="yellow", annotation_font_color="black")
-    fig.add_hline(y=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="red", row=1, col=1, annotation_text=f"Zero-Gamma: {zero_gamma_strike:.2f}", annotation_position="bottom left", annotation_bgcolor="red", annotation_font_color="white")
+    # Call GEX Bar
+    fig.add_trace(go.Bar(
+        y=df_sorted['Strike'], 
+        x=df_sorted['Call_GEX'], 
+        orientation='h', 
+        name='Call GEX (レジスタンス)', 
+        marker=dict(color='rgba(6, 187, 223, 0.85)', line=dict(color='#06bbdf', width=1)),
+        hovertemplate='<b>Strike: %{y}</b><br>Call GEX: $%{x:.2f}M<br>Call OI: %{customdata[0]:,.0f}<extra></extra>',
+        customdata=df_sorted[['Call_OpenInt']].values
+    ), row=1, col=1)
     
-    df_filtered['IV_Avg'] = (df_filtered['IV_Call'] + df_filtered['IV_Put']) / 2
-    fig.add_trace(go.Scatter(y=df_filtered['Strike'], x=df_filtered['IV_Avg'], mode='lines+markers', name='IV', line=dict(color='orange', width=2)), row=1, col=2)
+    # Net GEX Line + Markers
+    fig.add_trace(go.Scatter(
+        y=df_sorted['Strike'], 
+        x=df_sorted['Total_GEX'], 
+        mode='lines+markers', 
+        name='Net GEX', 
+        line=dict(color='#ffffff', width=2.5), 
+        marker=dict(size=5, color='#ffffff'),
+        hovertemplate='<b>Strike: %{y}</b><br>Net GEX: $%{x:.2f}M<extra></extra>'
+    ), row=1, col=1)
+    
+    # Current Spot Line
+    fig.add_hline(
+        y=spot_price, line_width=2, line_dash="solid", line_color="#f1c40f", 
+        row=1, col=1, 
+        annotation_text=f"Current Spot: {spot_price:.3f}", 
+        annotation_position="top right", 
+        annotation_bgcolor="#f1c40f", 
+        annotation_font_color="#000000",
+        annotation_font_size=11
+    )
+    
+    # Zero Gamma Line
+    fig.add_hline(
+        y=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="#ff4d4f", 
+        row=1, col=1, 
+        annotation_text=f"Zero-Gamma: {zero_gamma_strike:.2f}", 
+        annotation_position="bottom left", 
+        annotation_bgcolor="#ff4d4f", 
+        annotation_font_color="#ffffff",
+        annotation_font_size=11
+    )
+    
+    # IV Profile Trace
+    df_sorted['IV_Avg'] = (df_sorted['IV_Call'] + df_sorted['IV_Put']) / 2
+    df_iv = df_sorted[df_sorted['IV_Avg'] > 0]
+    fig.add_trace(go.Scatter(
+        y=df_iv['Strike'], 
+        x=df_iv['IV_Avg'], 
+        mode='lines+markers', 
+        name='IV', 
+        line=dict(color='#ff9f43', width=2.5), 
+        marker=dict(size=5, color='#ff9f43'),
+        hovertemplate='<b>Strike: %{y}</b><br>IV: %{x:.1f}%<extra></extra>'
+    ), row=1, col=2)
     
     fig.update_layout(
-        template="plotly_dark", paper_bgcolor="#101218", plot_bgcolor="#101218",
-        barmode='overlay', hovermode="y unified",
+        template="plotly_dark", 
+        paper_bgcolor="#101218", 
+        plot_bgcolor="#101218",
+        barmode='overlay', 
+        bargap=0.15,
+        hovermode="y unified",
         showlegend=False,
-        margin=dict(t=25, b=40, l=60, r=40),
+        margin=dict(t=30, b=40, l=65, r=40),
         height=680
     )
-    fig.update_yaxes(title_text="Strike Price", row=1, col=1, gridcolor="#2d2f38")
-    fig.update_xaxes(title_text="GEX ($M)", row=1, col=1, gridcolor="#2d2f38")
-    fig.update_xaxes(title_text="IV (%)", row=1, col=2, gridcolor="#2d2f38")
+    fig.update_yaxes(title_text="Strike Price", row=1, col=1, gridcolor="#22252e", zerolinecolor="#333742")
+    fig.update_xaxes(title_text="GEX ($M)", row=1, col=1, gridcolor="#22252e", zerolinecolor="#333742")
+    fig.update_yaxes(gridcolor="#22252e", row=1, col=2)
+    fig.update_xaxes(title_text="IV (%)", row=1, col=2, gridcolor="#22252e", zerolinecolor="#333742")
 
     graph_html = fig.to_html(full_html=False, include_plotlyjs='cdn', config={'responsive': True})
     
