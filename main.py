@@ -246,7 +246,7 @@ def process_asset_data(asset_key, config):
                 if dist < min_dist:
                     min_dist = dist
                     closest_flip_strike = exact_zero_strike
-            zero_gamma_strike = round(closest_flip_strike, 2)
+            zero_gamma_strike = closest_flip_strike
         else:
             zero_gamma_idx = df_valid['Total_GEX'].abs().idxmin()
             zero_gamma_strike = df_valid.loc[zero_gamma_idx, 'Strike']
@@ -268,15 +268,25 @@ def process_asset_data(asset_key, config):
     regime_str = "POSITIVE GAMMA REGIME (押し目買い優位)" if is_positive else "NEGATIVE GAMMA REGIME (パニック売り警戒)"
     regime_color = "#44c265" if is_positive else "#fe8983"
     
+    fmt = lambda x: f"{x:.5f}" if x < 0.1 else (f"{x:.3f}" if x < 1000 else f"{x:.2f}")
+
     data_summary = {
         "asset_name": config['name'],
-        "spot": round(spot_price, 3),
-        "zero_gamma": zero_gamma_strike,
+        "spot": round(spot_price, 5) if spot_price < 0.1 else round(spot_price, 3),
+        "zero_gamma": round(zero_gamma_strike, 5) if zero_gamma_strike < 0.1 else round(zero_gamma_strike, 3),
         "regime": regime_str,
         "call_walls": call_walls,
         "put_walls": put_walls
     }
     
+    if len(df_sorted) > 1:
+        diffs = df_sorted['Strike'].diff().dropna()
+        diffs = diffs[diffs > 0]
+        strike_gap = diffs.median() if not diffs.empty else spot_price * 0.01
+    else:
+        strike_gap = spot_price * 0.01
+    bar_width = strike_gap * 0.85
+
     fig = make_subplots(
         rows=1, cols=2, 
         shared_yaxes=True, 
@@ -290,6 +300,7 @@ def process_asset_data(asset_key, config):
         y=df_sorted['Strike'], 
         x=df_sorted['Put_GEX'], 
         orientation='h', 
+        width=bar_width,
         name='Put GEX (サポート)', 
         marker=dict(color='rgba(197, 152, 255, 0.85)', line=dict(color='#c598ff', width=1)),
         hovertemplate='<b>Strike: %{y}</b><br>Put GEX: $%{x:.2f}M<br>Put OI: %{customdata[0]:,.0f}<extra></extra>',
@@ -301,6 +312,7 @@ def process_asset_data(asset_key, config):
         y=df_sorted['Strike'], 
         x=df_sorted['Call_GEX'], 
         orientation='h', 
+        width=bar_width,
         name='Call GEX (レジスタンス)', 
         marker=dict(color='rgba(6, 187, 223, 0.85)', line=dict(color='#06bbdf', width=1)),
         hovertemplate='<b>Strike: %{y}</b><br>Call GEX: $%{x:.2f}M<br>Call OI: %{customdata[0]:,.0f}<extra></extra>',
@@ -322,7 +334,7 @@ def process_asset_data(asset_key, config):
     fig.add_hline(
         y=spot_price, line_width=2, line_dash="solid", line_color="#f1c40f", 
         row=1, col=1, 
-        annotation_text=f"Current Spot: {spot_price:.3f}", 
+        annotation_text=f"Current Spot: {fmt(spot_price)}", 
         annotation_position="top right", 
         annotation_bgcolor="#f1c40f", 
         annotation_font_color="#000000",
@@ -333,7 +345,7 @@ def process_asset_data(asset_key, config):
     fig.add_hline(
         y=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="#ff4d4f", 
         row=1, col=1, 
-        annotation_text=f"Zero-Gamma: {zero_gamma_strike:.2f}", 
+        annotation_text=f"Zero-Gamma: {fmt(zero_gamma_strike)}", 
         annotation_position="bottom left", 
         annotation_bgcolor="#ff4d4f", 
         annotation_font_color="#ffffff",
