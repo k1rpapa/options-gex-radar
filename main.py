@@ -432,7 +432,7 @@ def main():
             '    <style>\n'
             '        * { box-sizing: border-box; }\n'
             '        body { background-color: #101218; color: #ffffff; font-family: sans-serif; margin: 0; padding: 0; }\n'
-            '        .nav-tabs { background: #1a1d21; padding: 10px; display: flex; gap: 10px; overflow-x: auto; position: sticky; top: 0; z-index: 100; }\n'
+            '        .nav-tabs { background: #1a1d21; padding: 10px; display: flex; flex-wrap: wrap; gap: 8px; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid #2d2f38; }\n'
             '        .nav-tabs a { color: #c4c7c5; text-decoration: none; padding: 8px 16px; border-radius: 4px; font-size: 14px; white-space: nowrap; }\n'
             '        .nav-tabs a:hover { background: #2d2f38; }\n'
             '        .nav-tabs a.active { background: #0b57d0; color: white; font-weight: bold; }\n'
