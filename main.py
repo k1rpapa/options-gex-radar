@@ -38,7 +38,9 @@ ASSET_CONFIG = {
     "SB": {"name": "🍬 砂糖 (SB)", "ticker": "SB=F", "multiplier": 1120, "filename": "sb.html"},
     "HE": {"name": "🐷 豚肉 (HE)", "ticker": "HE=F", "multiplier": 400, "filename": "he.html"},
     "CC": {"name": "🍫 ココア (CC)", "ticker": "CC=F", "multiplier": 10, "filename": "cc.html"},
-    "KC": {"name": "☕ コーヒー (KC)", "ticker": "KC=F", "multiplier": 375, "filename": "kc.html"}
+    "KC": {"name": "☕ コーヒー (KC)", "ticker": "KC=F", "multiplier": 375, "filename": "kc.html"},
+    "DX": {"name": "💵 ドルインデックス (DXY)", "ticker": "DX-Y.NYB", "multiplier": 1000, "filename": "dxy.html"},
+    "J6": {"name": "💴 日本円 (JPY)", "ticker": "6J=F", "multiplier": 12500000, "filename": "jpy.html"}
 }
 
 # ==========================================
