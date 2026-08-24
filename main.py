@@ -214,29 +214,46 @@ def process_asset_data(asset_key, config):
     if len(oi_idx) >= 2:
         df_sb['Call_OpenInt'] = df_sb.iloc[:, oi_idx[0]].apply(clean_val)
         df_sb['Put_OpenInt'] = df_sb.iloc[:, oi_idx[1]].apply(clean_val)
+        df_sb_agg = df_sb.groupby('Strike', as_index=False)[['Call_OpenInt', 'Put_OpenInt']].sum()
+    elif 'Type' in df_sb.columns and len(oi_idx) == 1:
+        calls = df_sb[df_sb['Type'].astype(str).str.lower() == 'call'].copy()
+        puts = df_sb[df_sb['Type'].astype(str).str.lower() == 'put'].copy()
+        calls['Call_OpenInt'] = calls.iloc[:, oi_idx[0]].apply(clean_val)
+        puts['Put_OpenInt'] = puts.iloc[:, oi_idx[0]].apply(clean_val)
+        c_agg = calls.groupby('Strike', as_index=False)['Call_OpenInt'].sum()
+        p_agg = puts.groupby('Strike', as_index=False)['Put_OpenInt'].sum()
+        df_sb_agg = pd.merge(c_agg, p_agg, on='Strike', how='outer').fillna(0.0)
     else:
-        df_sb['Call_OpenInt'] = 0.0
-        df_sb['Put_OpenInt'] = 0.0
+        df_sb_agg = df_sb.groupby('Strike', as_index=False).agg({'Strike': 'first'})
+        df_sb_agg['Call_OpenInt'] = 0.0
+        df_sb_agg['Put_OpenInt'] = 0.0
 
     gamma_idx = [i for i, col in enumerate(df_gk.columns) if 'Gamma' in col]
     iv_idx = [i for i, col in enumerate(df_gk.columns) if 'IV' in col and 'Skew' not in col]
 
-    if len(gamma_idx) >= 2:
+    if len(gamma_idx) >= 2 and len(iv_idx) >= 2:
         df_gk['Gamma_Call'] = df_gk.iloc[:, gamma_idx[0]].apply(clean_val)
         df_gk['Gamma_Put'] = df_gk.iloc[:, gamma_idx[1]].apply(clean_val)
-    else:
-        df_gk['Gamma_Call'] = 0.0
-        df_gk['Gamma_Put'] = 0.0
-
-    if len(iv_idx) >= 2:
         df_gk['IV_Call'] = df_gk.iloc[:, iv_idx[0]].apply(clean_val)
         df_gk['IV_Put'] = df_gk.iloc[:, iv_idx[1]].apply(clean_val)
+        df_gk_agg = df_gk.groupby('Strike', as_index=False)[['Gamma_Call', 'Gamma_Put', 'IV_Call', 'IV_Put']].max()
+    elif 'Type' in df_gk.columns and len(gamma_idx) >= 1:
+        calls = df_gk[df_gk['Type'].astype(str).str.lower() == 'call'].copy()
+        puts = df_gk[df_gk['Type'].astype(str).str.lower() == 'put'].copy()
+        calls['Gamma_Call'] = calls.iloc[:, gamma_idx[0]].apply(clean_val)
+        calls['IV_Call'] = calls.iloc[:, iv_idx[0]].apply(clean_val) if iv_idx else 0.0
+        puts['Gamma_Put'] = puts.iloc[:, gamma_idx[0]].apply(clean_val)
+        puts['IV_Put'] = puts.iloc[:, iv_idx[0]].apply(clean_val) if iv_idx else 0.0
+        
+        c_agg = calls.groupby('Strike', as_index=False)[['Gamma_Call', 'IV_Call']].max()
+        p_agg = puts.groupby('Strike', as_index=False)[['Gamma_Put', 'IV_Put']].max()
+        df_gk_agg = pd.merge(c_agg, p_agg, on='Strike', how='outer').fillna(0.0)
     else:
-        df_gk['IV_Call'] = 0.0
-        df_gk['IV_Put'] = 0.0
-
-    df_sb_agg = df_sb.groupby('Strike', as_index=False)[['Call_OpenInt', 'Put_OpenInt']].sum()
-    df_gk_agg = df_gk.groupby('Strike', as_index=False)[['Gamma_Call', 'Gamma_Put', 'IV_Call', 'IV_Put']].max()
+        df_gk_agg = df_gk.groupby('Strike', as_index=False).agg({'Strike': 'first'})
+        df_gk_agg['Gamma_Call'] = 0.0
+        df_gk_agg['Gamma_Put'] = 0.0
+        df_gk_agg['IV_Call'] = 0.0
+        df_gk_agg['IV_Put'] = 0.0
 
     df_merged = df_gk_agg.merge(df_sb_agg, on='Strike', how='outer').fillna(0)
                          
