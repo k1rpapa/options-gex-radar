@@ -65,23 +65,80 @@ def clean_val(val):
 
 def load_barchart_csv(asset_key):
     prefix = asset_key.lower()
-    sb_files = sorted(glob.glob(f"{prefix}*side-by-side*.csv"))
-    gk_files = sorted(glob.glob(f"{prefix}*volatility-greeks*.csv"))
     
-    if not sb_files or not gk_files:
-        return None, None, None, None
+    # 正規表現で限月満了日(exp)とデータ取得日(as_of)を抽出
+    sb_pattern = re.compile(rf'^{prefix}[a-z0-9]*-options-.*exp-(\d{{2}}_\d{{2}}_\d{{2}}).*-(\d{{2}}-\d{{2}}-\d{{4}})(?: \(\d+\))?\.csv$', re.IGNORECASE)
+    gk_pattern = re.compile(rf'^{prefix}[a-z0-9]*-volatility-greeks.*exp-(\d{{2}}_\d{{2}}_\d{{2}}).*-(\d{{2}}-\d{{2}}-\d{{4}})(?: \(\d+\))?\.csv$', re.IGNORECASE)
+    
+    sb_dict = {}  # (expiry, as_of) -> filepath
+    gk_dict = {}  # (expiry, as_of) -> filepath
+    
+    for p in glob.glob(f"{prefix}*.csv"):
+        fname = Path(p).name
+        m_sb = sb_pattern.match(fname)
+        if m_sb:
+            key = (m_sb.group(1), m_sb.group(2))
+            is_show_all = 'show-all' in fname
+            if key not in sb_dict or (is_show_all and 'show-all' not in sb_dict[key]):
+                sb_dict[key] = p
+                
+        m_gk = gk_pattern.match(fname)
+        if m_gk:
+            key = (m_gk.group(1), m_gk.group(2))
+            is_show_all = 'show-all' in fname
+            if key not in gk_dict or (is_show_all and 'show-all' not in gk_dict[key]):
+                gk_dict[key] = p
+                
+    common_keys = set(sb_dict.keys()) & set(gk_dict.keys())
+    if not common_keys:
+        # 万一完全一致ペアがない場合のフォールバック
+        sb_files = glob.glob(f"{prefix}*side-by-side*.csv")
+        gk_files = glob.glob(f"{prefix}*volatility-greeks*.csv")
+        if not sb_files or not gk_files:
+            return None, None, None, None
+            
+        def extract_date(fpath):
+            dm = re.search(r'-(\d{2}-\d{2}-\d{4})(?: \(\d+\))?\.csv', fpath)
+            if dm:
+                try:
+                    return datetime.strptime(dm.group(1), '%m-%d-%Y')
+                except:
+                    pass
+            return datetime.min
+            
+        sb_path = max(sb_files, key=extract_date)
+        gk_path = max(gk_files, key=extract_date)
         
-    sb_path = sb_files[-1]
-    gk_path = gk_files[-1]
+        match = re.search(r'exp-(\d{2}_\d{2}_\d{2})', sb_path)
+        expiry = match.group(1) if match else "Unknown"
+        date_match = re.search(r'-(\d{2}-\d{2}-\d{4})\.csv', sb_path)
+        as_of_date = date_match.group(1) if date_match else None
+        
+        df_sb = pd.read_csv(sb_path)
+        df_gk = pd.read_csv(gk_path)
+        return df_sb, df_gk, expiry, as_of_date
+        
+    def sort_key(k):
+        exp_str, date_str = k
+        try:
+            d = datetime.strptime(date_str, '%m-%d-%Y')
+        except:
+            d = datetime.min
+        try:
+            exp_d = datetime.strptime(exp_str, '%m_%d_%y')
+        except:
+            exp_d = datetime.min
+        return (d, exp_d)
+        
+    best_key = max(common_keys, key=sort_key)
+    sb_path = sb_dict[best_key]
+    gk_path = gk_dict[best_key]
     
     df_sb = pd.read_csv(sb_path)
     df_gk = pd.read_csv(gk_path)
     
-    match = re.search(r'exp-(\d{2}_\d{2}_\d{2})', sb_path)
-    expiry = match.group(1) if match else "Unknown"
-    
-    date_match = re.search(r'-(\d{2}-\d{2}-\d{4})\.csv', sb_path)
-    as_of_date = date_match.group(1) if date_match else None
+    expiry = best_key[0]
+    as_of_date = best_key[1]
     
     return df_sb, df_gk, expiry, as_of_date
 
