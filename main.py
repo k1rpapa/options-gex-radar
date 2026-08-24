@@ -36,6 +36,7 @@ ASSET_CONFIG = {
     "ZC": {"name": "🌽 トウモロコシ (ZC)", "ticker": "ZC=F", "multiplier": 50, "filename": "zc.html"},
     "ZW": {"name": "🌾 小麦 (ZW)", "ticker": "ZW=F", "multiplier": 50, "filename": "zw.html"},
     "SB": {"name": "🍬 砂糖 (SB)", "ticker": "SB=F", "multiplier": 1120, "filename": "sb.html"},
+    "CT": {"name": "🧵 コットン (CT)", "ticker": "CT=F", "multiplier": 500, "filename": "ct.html"},
     "HE": {"name": "🐷 豚肉 (HE)", "ticker": "HE=F", "multiplier": 400, "filename": "he.html"},
     "CC": {"name": "🍫 ココア (CC)", "ticker": "CC=F", "multiplier": 10, "filename": "cc.html"},
     "KC": {"name": "☕ コーヒー (KC)", "ticker": "KC=F", "multiplier": 375, "filename": "kc.html"},
