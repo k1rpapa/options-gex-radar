@@ -63,15 +63,14 @@ def clean_val(val):
     except:
         return 0.0
 
-def load_barchart_csv(asset_key):
+def get_all_csv_pairs(asset_key):
+    """銘柄に該当する全日付のCSVペア (expiry, as_of) -> (sb_path, gk_path) を取得"""
     prefix = asset_key.lower()
-    
-    # 正規表現で限月満了日(exp)とデータ取得日(as_of)を抽出
     sb_pattern = re.compile(rf'^{prefix}[a-z0-9]*-options-.*exp-(\d{{2}}_\d{{2}}_\d{{2}}).*-(\d{{2}}-\d{{2}}-\d{{4}})(?: \(\d+\))?\.csv$', re.IGNORECASE)
     gk_pattern = re.compile(rf'^{prefix}[a-z0-9]*-volatility-greeks.*exp-(\d{{2}}_\d{{2}}_\d{{2}}).*-(\d{{2}}-\d{{2}}-\d{{4}})(?: \(\d+\))?\.csv$', re.IGNORECASE)
     
-    sb_dict = {}  # (expiry, as_of) -> filepath
-    gk_dict = {}  # (expiry, as_of) -> filepath
+    sb_dict = {}
+    gk_dict = {}
     
     for p in glob.glob(f"{prefix}*.csv"):
         fname = Path(p).name
@@ -89,9 +88,17 @@ def load_barchart_csv(asset_key):
             if key not in gk_dict or (is_show_all and 'show-all' not in gk_dict[key]):
                 gk_dict[key] = p
                 
-    common_keys = set(sb_dict.keys()) & set(gk_dict.keys())
+    common_keys = sorted(
+        list(set(sb_dict.keys()) & set(gk_dict.keys())), 
+        key=lambda k: (datetime.strptime(k[1], '%m-%d-%Y'), datetime.strptime(k[0], '%m_%d_%y'))
+    )
+    return common_keys, sb_dict, gk_dict
+
+def load_barchart_csv(asset_key):
+    common_keys, sb_dict, gk_dict = get_all_csv_pairs(asset_key)
     if not common_keys:
         # 万一完全一致ペアがない場合のフォールバック
+        prefix = asset_key.lower()
         sb_files = glob.glob(f"{prefix}*side-by-side*.csv")
         gk_files = glob.glob(f"{prefix}*volatility-greeks*.csv")
         if not sb_files or not gk_files:
@@ -118,19 +125,7 @@ def load_barchart_csv(asset_key):
         df_gk = pd.read_csv(gk_path)
         return df_sb, df_gk, expiry, as_of_date
         
-    def sort_key(k):
-        exp_str, date_str = k
-        try:
-            d = datetime.strptime(date_str, '%m-%d-%Y')
-        except:
-            d = datetime.min
-        try:
-            exp_d = datetime.strptime(exp_str, '%m_%d_%y')
-        except:
-            exp_d = datetime.min
-        return (d, exp_d)
-        
-    best_key = max(common_keys, key=sort_key)
+    best_key = common_keys[-1]
     sb_path = sb_dict[best_key]
     gk_path = gk_dict[best_key]
     
@@ -142,68 +137,10 @@ def load_barchart_csv(asset_key):
     
     return df_sb, df_gk, expiry, as_of_date
 
-def generate_batched_insights(asset_summaries):
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("[-] Error: GEMINI_API_KEY is missing.")
-        return {k: "<p style='color:#fe8983;'>[エラー] APIキーが設定されていません。</p>" for k in asset_summaries.keys()}
-        
-    genai.configure(api_key=api_key)
-    
-    models_to_try = [
-        "gemini-2.5-flash",
-        "gemini-1.5-pro-latest",
-        "gemini-1.5-flash-latest"
-    ]
-    
-    # シンタックスハイライトを壊さないための安全な文字列結合
-    prompt = (
-        "あなたは金融工学とオプション取引に精通した「リード・クオンツアナリスト」です。\n"
-        "以下の全銘柄の最新のGEX（ガンマ・エクスポージャー）データに基づき、オプション初心者にも分かるように現在の重力場の分析と、実践的なトレード戦略をJSONフォーマットで出力してください。\n\n"
-        "【全銘柄のデータ】\n"
-        f"{json.dumps(asset_summaries, ensure_ascii=False, indent=2)}\n\n"
-        "【各銘柄のインサイト出力ルール (厳守事項)】\n"
-        "- Webページに直接埋め込むため、各銘柄の値(Value)には純粋なHTMLの断片のみを文字列として出力すること。\n"
-        "- 以下のHTMLタグを駆使して構造化すること: <h3>, <ul>, <li>, <p>, <strong>\n"
-        "- ダークテーマのダッシュボードに映えるよう、重要な数値や方向性にはインラインCSSで色付けをすること。（HTMLの属性にはシングルクォート「'」を使用し、JSONを壊さないこと。例: <span style='color: #44c265;'>）\n"
-        "- 各銘柄のデータに含まれる「Call Wall（レジスタンス）」「Put Wall（サポート）」の数値を具体的に引用しながら、現在のレジームに基づく「どこでエントリーし、どこで利確・損切りすべきか」の具体的なアクションプランにフォーカスすること。\n\n"
-        "【出力すべきJSONフォーマット】\n"
-        "Markdownのコードブロック記号(バッククォート3つなど)や挨拶は一切不要です。純粋なJSONオブジェクトのみを出力してください。\n"
-        "{\n"
-        '  "ES": "<h3>🇺🇸 S&P 500 (ES) 分析</h3><ul><li>...</li></ul>",\n'
-        '  "SI": "<h3>🥈 シルバー (SI) 分析</h3><ul><li>...</li></ul>",\n'
-        '  ...\n'
-        "}"
-    )
-    
-    last_error = None
-    for target_model in models_to_try:
-        print(f"[*] Trying AI Model: {target_model}...")
-        try:
-            model = genai.GenerativeModel(model_name=target_model)
-            response = model.generate_content(prompt)
-            res_text = response.text.strip()
-            
-            match = re.search(r'\{.*\}', res_text, re.DOTALL)
-            if match:
-                res_text = match.group(0)
-                
-            insights = json.loads(res_text)
-            print(f"[+] AI Insights successfully generated via {target_model}.")
-            return insights
-        except Exception as e:
-            print(f"[-] Model {target_model} failed: {e}")
-            last_error = e
-            
-    print("[-] All AI models failed in the fallback array.")
-    err_msg = f"<p style='color:#fe8983;'>[AI生成エラー] 制限超過またはAPIの仕様変更による一時的な障害です。<br>詳細: {last_error}</p>"
-    return {k: err_msg for k in asset_summaries.keys()}
-
-def process_asset_data(asset_key, config):
-    df_sb, df_gk, expiry, file_as_of = load_barchart_csv(asset_key)
-    if df_sb is None:
-        raise FileNotFoundError(f"CSV files not found for {asset_key}")
-        
+def calculate_gex_metrics(df_sb, df_gk, mult, spot_price_hint=None):
+    """単一スナップショットからGEX、ZG、Call/Put Wallを算出"""
+    df_sb = df_sb.copy()
+    df_gk = df_gk.copy()
     df_sb.columns = [str(c).strip() for c in df_sb.columns]
     df_gk.columns = [str(c).strip() for c in df_gk.columns]
     
@@ -244,7 +181,6 @@ def process_asset_data(asset_key, config):
         calls['IV_Call'] = calls.iloc[:, iv_idx[0]].apply(clean_val) if iv_idx else 0.0
         puts['Gamma_Put'] = puts.iloc[:, gamma_idx[0]].apply(clean_val)
         puts['IV_Put'] = puts.iloc[:, iv_idx[0]].apply(clean_val) if iv_idx else 0.0
-        
         c_agg = calls.groupby('Strike', as_index=False)[['Gamma_Call', 'IV_Call']].max()
         p_agg = puts.groupby('Strike', as_index=False)[['Gamma_Put', 'IV_Put']].max()
         df_gk_agg = pd.merge(c_agg, p_agg, on='Strike', how='outer').fillna(0.0)
@@ -256,46 +192,29 @@ def process_asset_data(asset_key, config):
         df_gk_agg['IV_Put'] = 0.0
 
     df_merged = df_gk_agg.merge(df_sb_agg, on='Strike', how='outer').fillna(0)
-                         
-    mult = config['multiplier']
     
-    spot_price = 0.0
-    try:
-        hist = yf.Ticker(config['ticker']).history(period="5d")
-        if not hist.empty:
-            spot_price = float(hist['Close'].iloc[-1])
-    except Exception as e:
-        print(f"Warning: Failed to fetch spot price for {config['ticker']}: {e}")
-        
+    spot_price = spot_price_hint if spot_price_hint and spot_price_hint > 0 else df_merged['Strike'].median()
     if spot_price == 0.0:
-        spot_price = df_merged['Strike'].median()
+        spot_price = 1.0
 
-    # Standard 1% Dollar GEX ($M): Gamma * OI * Multiplier * (Spot^2 * 0.01) / 1e6
     spot_scale = (spot_price ** 2) * 0.01 / 1e6
     df_merged['Call_GEX'] = df_merged['Gamma_Call'] * df_merged['Call_OpenInt'] * mult * spot_scale
     df_merged['Put_GEX'] = df_merged['Gamma_Put'] * df_merged['Put_OpenInt'] * mult * spot_scale * -1
     df_merged['Total_GEX'] = df_merged['Call_GEX'] + df_merged['Put_GEX']
     df_merged['Total_OI'] = df_merged['Call_OpenInt'] + df_merged['Put_OpenInt']
 
-    spot_date = file_as_of if file_as_of else datetime.now().strftime('%m-%d-%Y')
-
-    # Filter strikes: focus around Spot price (ATM +/- 15%)
     min_strike = spot_price * 0.85
     max_strike = spot_price * 1.15
     df_near = df_merged[(df_merged['Strike'] >= min_strike) & (df_merged['Strike'] <= max_strike)].copy()
-
-    # Prune inactive strikes (0 OI and 0 GEX) to eliminate razor-thin bars and empty gaps
     active_mask = (df_near['Total_OI'] > 0) | (df_near['Total_GEX'].abs() > 0.001)
     df_active = df_near[active_mask].copy()
 
-    # If active strikes in +/-15% is fewer than 12, expand to all active strikes
     if len(df_active) < 12:
         df_active = df_merged[(df_merged['Total_OI'] > 0) | (df_merged['Total_GEX'].abs() > 0.001)].copy()
 
     if df_active.empty:
         df_active = df_merged.copy()
 
-    # If there are still too many strikes (>32), pick the ~30 strikes closest to Spot for ideal ladder bar thickness
     if len(df_active) > 32:
         df_active['Dist_From_Spot'] = (df_active['Strike'] - spot_price).abs()
         df_active = df_active.nsmallest(32, 'Dist_From_Spot').copy()
@@ -330,15 +249,335 @@ def process_asset_data(asset_key, config):
 
     call_walls_df = df_sorted[df_sorted['Call_GEX'] > 0].nlargest(2, 'Call_GEX')[['Strike', 'Call_GEX']].copy()
     put_walls_df = df_sorted[df_sorted['Put_GEX'] < 0].nsmallest(2, 'Put_GEX')[['Strike', 'Put_GEX']].copy()
-    call_walls_df['Call_GEX'] = call_walls_df['Call_GEX'].round(2)
-    put_walls_df['Put_GEX'] = put_walls_df['Put_GEX'].round(2)
     
     call_walls = call_walls_df.to_dict('records')
     put_walls = put_walls_df.to_dict('records')
-    
     while len(call_walls) < 2: call_walls.append({"Strike": 0.0, "Call_GEX": 0.0})
     while len(put_walls) < 2: put_walls.append({"Strike": 0.0, "Put_GEX": 0.0})
+
+    return {
+        "df_sorted": df_sorted,
+        "spot_price": spot_price,
+        "zero_gamma": zero_gamma_strike,
+        "call_walls": call_walls,
+        "put_walls": put_walls
+    }
+
+def generate_batched_insights(asset_summaries):
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("[-] Error: GEMINI_API_KEY is missing.")
+        return {k: "<p style='color:#fe8983;'>[エラー] APIキーが設定されていません。</p>" for k in asset_summaries.keys()}
+        
+    genai.configure(api_key=api_key)
     
+    models_to_try = [
+        "gemini-2.5-flash",
+        "gemini-1.5-pro-latest",
+        "gemini-1.5-flash-latest"
+    ]
+    
+    prompt = (
+        "あなたは金融工学とオプション取引に精通した「リード・クオンツアナリスト」です。\n"
+        "以下の全銘柄の最新GEXデータおよび【Zero-Gammaの直近急変・推移アラート】に基づき、オプション初心者にも分かるように現在の重力場の分析と、実践的なトレード戦略をJSONフォーマットで出力してください。\n\n"
+        "【全銘柄のデータ】\n"
+        f"{json.dumps(asset_summaries, ensure_ascii=False, indent=2)}\n\n"
+        "【各銘柄のインサイト出力ルール (厳守事項)】\n"
+        "- Webページに直接埋め込むため、各銘柄の値(Value)には純粋なHTMLの断片のみを文字列として出力すること。\n"
+        "- 以下のHTMLタグを駆使して構造化すること: <h3>, <ul>, <li>, <p>, <strong>\n"
+        "- ダークテーマのダッシュボードに映えるよう、重要な数値や方向性にはインラインCSSで色付けをすること。（例: <span style='color: #44c265;'>）\n"
+        "- 「Call Wall（レジスタンス）」「Put Wall（サポート）」および「Zero Gammaの急変や移動」を具体的に引用しながら、現在のレジームに基づく「どこでエントリーし、どこで利確・損切りすべきか」の具体的なアクションプランにフォーカスすること。\n\n"
+        "【出力すべきJSONフォーマット】\n"
+        "Markdownのコードブロック記号(バッククォート3つなど)や挨拶は一切不要です。純粋なJSONオブジェクトのみを出力してください。\n"
+        "{\n"
+        '  "ES": "<h3>🇺🇸 S&P 500 (ES) 分析</h3><ul><li>...</li></ul>",\n'
+        '  "SI": "<h3>🥈 シルバー (SI) 分析</h3><ul><li>...</li></ul>",\n'
+        '  ...\n'
+        "}"
+    )
+    
+    last_error = None
+    for target_model in models_to_try:
+        print(f"[*] Trying AI Model: {target_model}...")
+        try:
+            model = genai.GenerativeModel(model_name=target_model)
+            response = model.generate_content(prompt)
+            res_text = response.text.strip()
+            
+            match = re.search(r'\{.*\}', res_text, re.DOTALL)
+            if match:
+                res_text = match.group(0)
+                
+            insights = json.loads(res_text)
+            print(f"[+] AI Insights successfully generated via {target_model}.")
+            return insights
+        except Exception as e:
+            print(f"[-] Model {target_model} failed: {e}")
+            last_error = e
+            
+    print("[-] All AI models failed in the fallback array.")
+    err_msg = f"<p style='color:#fe8983;'>[AI生成エラー] 制限超過またはAPIの仕様変更による一時的な障害です。<br>詳細: {last_error}</p>"
+    return {k: err_msg for k in asset_summaries.keys()}
+
+def build_timeline_dataframe(asset_key, config, ticker_hist):
+    """過去全日のスナップショットから時系列DataFrameを構築"""
+    common_keys, sb_dict, gk_dict = get_all_csv_pairs(asset_key)
+    if not common_keys:
+        return pd.DataFrame()
+        
+    records = []
+    mult = config['multiplier']
+    
+    for exp, date_str in common_keys:
+        d = datetime.strptime(date_str, '%m-%d-%Y')
+        d_fmt = d.strftime('%Y-%m-%d')
+        spot = None
+        if not ticker_hist.empty:
+            if d_fmt in ticker_hist.index.strftime('%Y-%m-%d'):
+                spot = float(ticker_hist.loc[ticker_hist.index.strftime('%Y-%m-%d') == d_fmt, 'Close'].iloc[0])
+            else:
+                past_spots = ticker_hist.loc[ticker_hist.index.strftime('%Y-%m-%d') <= d_fmt, 'Close']
+                if not past_spots.empty:
+                    spot = float(past_spots.iloc[-1])
+                    
+        df_sb = pd.read_csv(sb_dict[(exp, date_str)])
+        df_gk = pd.read_csv(gk_dict[(exp, date_str)])
+        
+        metrics = calculate_gex_metrics(df_sb, df_gk, mult, spot)
+        
+        cw1 = metrics['call_walls'][0]['Strike']
+        cw2 = metrics['call_walls'][1]['Strike']
+        pw1 = metrics['put_walls'][0]['Strike']
+        pw2 = metrics['put_walls'][1]['Strike']
+        
+        records.append({
+            "date": d.strftime('%m/%d'),
+            "full_date": date_str,
+            "datetime": d,
+            "spot": round(metrics['spot_price'], 4),
+            "zero_gamma": round(metrics['zero_gamma'], 4),
+            "call_wall_1": cw1,
+            "call_wall_2": cw2,
+            "put_wall_1": pw1,
+            "put_wall_2": pw2
+        })
+        
+    df_timeline = pd.DataFrame(records).sort_values('datetime').reset_index(drop=True)
+    return df_timeline
+
+def evaluate_zg_alert(df_timeline, current_spot, current_zg):
+    """ZG急変およびレジーム変化を判定してアラート情報を生成"""
+    if df_timeline.empty or len(df_timeline) < 2:
+        return {
+            "level": "info",
+            "title": "ZG STABLE (通常推移)",
+            "badge_class": "badge-stable",
+            "delta_zg": 0.0,
+            "pct_zg": 0.0,
+            "message": "履歴データが蓄積され次第、急変検知を開始します。"
+        }
+        
+    prev_row = df_timeline.iloc[-2]
+    curr_row = df_timeline.iloc[-1]
+    
+    prev_zg = prev_row['zero_gamma']
+    prev_spot = prev_row['spot']
+    
+    delta_zg = current_zg - prev_zg
+    pct_zg = (delta_zg / prev_zg * 100.0) if prev_zg > 0 else 0.0
+    
+    prev_is_pos = prev_spot >= prev_zg
+    curr_is_pos = current_spot >= current_zg
+    regime_flipped = (prev_is_pos != curr_is_pos)
+    
+    fmt = lambda x: f"{x:.4f}" if x < 0.1 else (f"{x:.2f}" if x < 1000 else f"{x:.1f}")
+    sign = "+" if delta_zg >= 0 else ""
+    
+    # 判定基準: 変動率 >= 5% または レジーム反転
+    if abs(pct_zg) >= 5.0:
+        direction = "急騰 🚀" if delta_zg > 0 else "急落 🔻"
+        consequence = (
+            "ZGが大幅に切り上がったため、SpotがNegative Gamma圏へ転落しやすく、ボラティリティ急拡大・下落スクイーズへの警戒が必要です。"
+            if delta_zg > 0 else
+            "ZGが急低下したため、Positive Gamma圏が拡大し、相場が安定・レンジ回帰（Gamma Pinning）しやすくなっています。"
+        )
+        return {
+            "level": "critical",
+            "title": f"ZG SPIKE ALERT: Zero-Gamma {direction}",
+            "badge_class": "badge-critical",
+            "delta_zg": delta_zg,
+            "pct_zg": pct_zg,
+            "message": f"ZGが直近比較で <strong>{sign}{fmt(delta_zg)} ({sign}{pct_zg:.1f}%)</strong> 大幅変動（{fmt(prev_zg)} ➔ {fmt(current_zg)}）。{consequence}"
+        }
+    elif regime_flipped:
+        new_regime = "POSITIVE (押し目優位)" if curr_is_pos else "NEGATIVE (ボラ拡大警戒)"
+        return {
+            "level": "warning",
+            "title": f"REGIME FLIP: ガンマ・レジーム転換 ➔ {new_regime}",
+            "badge_class": "badge-warning",
+            "delta_zg": delta_zg,
+            "pct_zg": pct_zg,
+            "message": f"Spot価格（{fmt(current_spot)}）がZG（{fmt(current_zg)}）と交差し、レジームが反転しました。トレード戦略の切り替えを推奨します。"
+        }
+    elif abs(pct_zg) >= 2.5:
+        return {
+            "level": "warning",
+            "title": "ZG SHIFT: Zero-Gamma有意な変動検知",
+            "badge_class": "badge-warning",
+            "delta_zg": delta_zg,
+            "pct_zg": pct_zg,
+            "message": f"ZGが <strong>{sign}{fmt(delta_zg)} ({sign}{pct_zg:.1f}%)</strong> シフト（{fmt(prev_zg)} ➔ {fmt(current_zg)}）。ウォールの移動と防衛ラインを確認してください。"
+        }
+    else:
+        return {
+            "level": "info",
+            "title": "ZG STABLE: 安定レジーム維持",
+            "badge_class": "badge-stable",
+            "delta_zg": delta_zg,
+            "pct_zg": pct_zg,
+            "message": f"Zero-Gammaは安定推移しています（前日比 {sign}{fmt(delta_zg)} / {sign}{pct_zg:.1f}%）。現在の防衛ラインが機能中です。"
+        }
+
+def generate_timeline_chart(df_timeline, asset_name):
+    """案A: 階層別マルチライン＆ガンマレンジ・バンドの時系列チャートを生成"""
+    if df_timeline.empty or len(df_timeline) < 1:
+        return "<p style='color:#c4c7c5; padding:20px;'>時系列データを蓄積中です。</p>"
+        
+    fig = go.Figure()
+    
+    # 1. ガンマレンジ・バンド (Major Put Wall 〜 Major Call Wall)
+    # 下限トレース（透明）
+    fig.add_trace(go.Scatter(
+        x=df_timeline['date'],
+        y=df_timeline['put_wall_1'],
+        mode='lines',
+        line=dict(width=0, color='rgba(0,0,0,0)'),
+        showlegend=False,
+        hoverinfo='skip'
+    ))
+    # 上限トレース（塗りつぶし）
+    fig.add_trace(go.Scatter(
+        x=df_timeline['date'],
+        y=df_timeline['call_wall_1'],
+        mode='lines',
+        line=dict(width=0, color='rgba(0,0,0,0)'),
+        fill='tonexty',
+        fillcolor='rgba(6, 187, 223, 0.07)',
+        name='Gamma Range (想定取引レンジ)',
+        hoverinfo='skip'
+    ))
+    
+    # 2. Minor Walls (破線・太さ2.0・高視認性)
+    fig.add_trace(go.Scatter(
+        x=df_timeline['date'],
+        y=df_timeline['call_wall_2'],
+        mode='lines+markers',
+        line=dict(color='rgba(6, 187, 223, 0.85)', width=2.0, dash='dash'),
+        marker=dict(size=4, color='#06bbdf'),
+        name='Minor Call Wall (第2抵抗線)',
+        hovertemplate='Minor Call Wall: %{y}<extra></extra>'
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=df_timeline['date'],
+        y=df_timeline['put_wall_2'],
+        mode='lines+markers',
+        line=dict(color='rgba(197, 152, 255, 0.85)', width=2.0, dash='dash'),
+        marker=dict(size=4, color='#c598ff'),
+        name='Minor Put Wall (第2支持線)',
+        hovertemplate='Minor Put Wall: %{y}<extra></extra>'
+    ))
+    
+    # 3. Major Walls (太線実線 3.0)
+    fig.add_trace(go.Scatter(
+        x=df_timeline['date'],
+        y=df_timeline['call_wall_1'],
+        mode='lines+markers',
+        line=dict(color='#06bbdf', width=3.0),
+        marker=dict(size=6, color='#06bbdf'),
+        name='Major Call Wall (主要抵抗線)',
+        hovertemplate='Major Call Wall: %{y}<extra></extra>'
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=df_timeline['date'],
+        y=df_timeline['put_wall_1'],
+        mode='lines+markers',
+        line=dict(color='#c598ff', width=3.0),
+        marker=dict(size=6, color='#c598ff'),
+        name='Major Put Wall (主要支持線)',
+        hovertemplate='Major Put Wall: %{y}<extra></extra>'
+    ))
+    
+    # 4. Zero Gamma (ZG) (赤破線太線 2.8)
+    fig.add_trace(go.Scatter(
+        x=df_timeline['date'],
+        y=df_timeline['zero_gamma'],
+        mode='lines+markers',
+        line=dict(color='#ff4d4f', width=2.8, dash='dash'),
+        marker=dict(size=6, color='#ff4d4f'),
+        name='Zero-Gamma (ZG)',
+        hovertemplate='<b>Zero-Gamma: %{y}</b><extra></extra>'
+    ))
+    
+    # 5. Spot Price (黄太実線 3.5)
+    fig.add_trace(go.Scatter(
+        x=df_timeline['date'],
+        y=df_timeline['spot'],
+        mode='lines+markers',
+        line=dict(color='#f1c40f', width=3.5),
+        marker=dict(size=7, color='#f1c40f'),
+        name='Spot Price (原資産価格)',
+        hovertemplate='<b>Spot Price: %{y}</b><extra></extra>'
+    ))
+    
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#101218",
+        plot_bgcolor="#101218",
+        hovermode="x unified",
+        margin=dict(t=20, b=40, l=60, r=30),
+        height=480,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(size=11, color="#c4c7c5"),
+            bgcolor="rgba(16, 18, 24, 0.85)"
+        )
+    )
+    fig.update_xaxes(title_text="Date (時系列推移)", gridcolor="#22252e", zerolinecolor="#333742")
+    fig.update_yaxes(title_text="Price / Strike ($)", gridcolor="#22252e", zerolinecolor="#333742")
+    
+    return fig.to_html(full_html=False, include_plotlyjs=False, config={'responsive': True})
+
+def process_asset_data(asset_key, config, ticker_hist):
+    df_sb, df_gk, expiry, file_as_of = load_barchart_csv(asset_key)
+    if df_sb is None:
+        raise FileNotFoundError(f"CSV files not found for {asset_key}")
+        
+    mult = config['multiplier']
+    
+    spot_price = 0.0
+    if not ticker_hist.empty:
+        spot_price = float(ticker_hist['Close'].iloc[-1])
+        
+    metrics = calculate_gex_metrics(df_sb, df_gk, mult, spot_price)
+    df_sorted = metrics['df_sorted']
+    spot_price = metrics['spot_price']
+    zero_gamma_strike = metrics['zero_gamma']
+    call_walls = metrics['call_walls']
+    put_walls = metrics['put_walls']
+    
+    # 時系列データの構築
+    df_timeline = build_timeline_dataframe(asset_key, config, ticker_hist)
+    
+    # ZG急変アラートの判定
+    alert_info = evaluate_zg_alert(df_timeline, spot_price, zero_gamma_strike)
+    
+    spot_date = file_as_of if file_as_of else datetime.now().strftime('%m-%d-%Y')
     is_positive = spot_price > zero_gamma_strike
     regime_str = "POSITIVE GAMMA REGIME (押し目買い優位)" if is_positive else "NEGATIVE GAMMA REGIME (パニック売り警戒)"
     regime_color = "#44c265" if is_positive else "#fe8983"
@@ -351,9 +590,14 @@ def process_asset_data(asset_key, config):
         "zero_gamma": round(zero_gamma_strike, 5) if zero_gamma_strike < 0.1 else round(zero_gamma_strike, 3),
         "regime": regime_str,
         "call_walls": call_walls,
-        "put_walls": put_walls
+        "put_walls": put_walls,
+        "zg_alert_level": alert_info["level"],
+        "zg_alert_title": alert_info["title"],
+        "zg_delta": round(alert_info["delta_zg"], 3),
+        "zg_pct_change": round(alert_info["pct_zg"], 1)
     }
     
+    # 本日のGEXラダー＆IVプロファイル (上段チャート)
     if len(df_sorted) > 1:
         diffs = df_sorted['Strike'].diff().dropna()
         diffs = diffs[diffs > 0]
@@ -362,7 +606,7 @@ def process_asset_data(asset_key, config):
         strike_gap = spot_price * 0.01
     bar_width = strike_gap * 0.85
 
-    fig = make_subplots(
+    fig_ladder = make_subplots(
         rows=1, cols=2, 
         shared_yaxes=True, 
         horizontal_spacing=0.03, 
@@ -371,7 +615,7 @@ def process_asset_data(asset_key, config):
     )
     
     # Put GEX Bar
-    fig.add_trace(go.Bar(
+    fig_ladder.add_trace(go.Bar(
         y=df_sorted['Strike'], 
         x=df_sorted['Put_GEX'], 
         orientation='h', 
@@ -383,7 +627,7 @@ def process_asset_data(asset_key, config):
     ), row=1, col=1)
     
     # Call GEX Bar
-    fig.add_trace(go.Bar(
+    fig_ladder.add_trace(go.Bar(
         y=df_sorted['Strike'], 
         x=df_sorted['Call_GEX'], 
         orientation='h', 
@@ -395,7 +639,7 @@ def process_asset_data(asset_key, config):
     ), row=1, col=1)
     
     # Net GEX Line + Markers
-    fig.add_trace(go.Scatter(
+    fig_ladder.add_trace(go.Scatter(
         y=df_sorted['Strike'], 
         x=df_sorted['Total_GEX'], 
         mode='lines+markers', 
@@ -406,7 +650,7 @@ def process_asset_data(asset_key, config):
     ), row=1, col=1)
     
     # Current Spot Line
-    fig.add_hline(
+    fig_ladder.add_hline(
         y=spot_price, line_width=2, line_dash="solid", line_color="#f1c40f", 
         row=1, col=1, 
         annotation_text=f"Current Spot: {fmt(spot_price)}", 
@@ -417,7 +661,7 @@ def process_asset_data(asset_key, config):
     )
     
     # Zero Gamma Line
-    fig.add_hline(
+    fig_ladder.add_hline(
         y=zero_gamma_strike, line_width=1.5, line_dash="dashdot", line_color="#ff4d4f", 
         row=1, col=1, 
         annotation_text=f"Zero-Gamma: {fmt(zero_gamma_strike)}", 
@@ -430,7 +674,7 @@ def process_asset_data(asset_key, config):
     # IV Profile Trace
     df_sorted['IV_Avg'] = (df_sorted['IV_Call'] + df_sorted['IV_Put']) / 2
     df_iv = df_sorted[df_sorted['IV_Avg'] > 0]
-    fig.add_trace(go.Scatter(
+    fig_ladder.add_trace(go.Scatter(
         y=df_iv['Strike'], 
         x=df_iv['IV_Avg'], 
         mode='lines+markers', 
@@ -440,7 +684,7 @@ def process_asset_data(asset_key, config):
         hovertemplate='<b>Strike: %{y}</b><br>IV: %{x:.1f}%<extra></extra>'
     ), row=1, col=2)
     
-    fig.update_layout(
+    fig_ladder.update_layout(
         template="plotly_dark", 
         paper_bgcolor="#101218", 
         plot_bgcolor="#101218",
@@ -449,39 +693,56 @@ def process_asset_data(asset_key, config):
         hovermode="y unified",
         showlegend=False,
         margin=dict(t=30, b=40, l=65, r=40),
-        height=680
+        height=620
     )
-    fig.update_yaxes(title_text="Strike Price", row=1, col=1, gridcolor="#22252e", zerolinecolor="#333742")
-    fig.update_xaxes(title_text="GEX ($M)", row=1, col=1, gridcolor="#22252e", zerolinecolor="#333742")
-    fig.update_yaxes(gridcolor="#22252e", row=1, col=2)
-    fig.update_xaxes(title_text="IV (%)", row=1, col=2, gridcolor="#22252e", zerolinecolor="#333742")
+    fig_ladder.update_yaxes(title_text="Strike Price", row=1, col=1, gridcolor="#22252e", zerolinecolor="#333742")
+    fig_ladder.update_xaxes(title_text="GEX ($M)", row=1, col=1, gridcolor="#22252e", zerolinecolor="#333742")
+    fig_ladder.update_yaxes(gridcolor="#22252e", row=1, col=2)
+    fig_ladder.update_xaxes(title_text="IV (%)", row=1, col=2, gridcolor="#22252e", zerolinecolor="#333742")
 
-    graph_html = fig.to_html(full_html=False, include_plotlyjs='cdn', config={'responsive': True})
+    ladder_html = fig_ladder.to_html(full_html=False, include_plotlyjs=False, config={'responsive': True})
+    
+    # 時系列チャート (下段)
+    timeline_html = generate_timeline_chart(df_timeline, config['name'])
     
     header_info = {
         "expiry": expiry,
         "spot_date": spot_date,
         "regime_str": regime_str,
         "regime_color": regime_color,
-        "is_positive": is_positive
+        "is_positive": is_positive,
+        "alert_info": alert_info
     }
-    return graph_html, data_summary, header_info
+    return ladder_html, timeline_html, data_summary, header_info
 
 def main():
-    graphs = {}
+    ladder_graphs = {}
+    timeline_graphs = {}
     asset_summaries = {}
     headers_info = {}
     
+    # 事前に全銘柄の株価ヒストリを取得
+    ticker_hists = {}
+    print("[*] Pre-fetching market historical prices...")
+    for key, config in ASSET_CONFIG.items():
+        try:
+            ticker_hists[key] = yf.Ticker(config['ticker']).history(period="6mo")
+        except Exception as e:
+            print(f"[-] Warning: Failed to fetch history for {config['ticker']}: {e}")
+            ticker_hists[key] = pd.DataFrame()
+            
     for key, config in ASSET_CONFIG.items():
         print(f"[*] Processing {config['name']}...")
         try:
-            graph_html, summary, header_info = process_asset_data(key, config)
-            graphs[key] = graph_html
+            ladder_html, timeline_html, summary, header_info = process_asset_data(key, config, ticker_hists.get(key, pd.DataFrame()))
+            ladder_graphs[key] = ladder_html
+            timeline_graphs[key] = timeline_html
             asset_summaries[key] = summary
             headers_info[key] = header_info
         except Exception as e:
             print(f"[-] Error: Failed to process {config['name']}: {e}")
-            graphs[key] = f"<p style='color:red;'>データ処理エラー: {e}</p>"
+            ladder_graphs[key] = f"<p style='color:red;'>データ処理エラー: {e}</p>"
+            timeline_graphs[key] = ""
 
     print("\n[*] Dispatching batch request to Gemini AI...")
     ai_insights = {}
@@ -490,11 +751,15 @@ def main():
 
     for key, config in ASSET_CONFIG.items():
         print(f"[*] Building HTML for {config['name']}...")
-        graph_html = graphs.get(key, "")
+        ladder_html = ladder_graphs.get(key, "")
+        timeline_html = timeline_graphs.get(key, "")
+        
         info = headers_info.get(key, {
             "expiry": "N/A", "spot_date": "N/A", 
-            "regime_str": "UNKNOWN", "regime_color": "#ffffff", "is_positive": True
+            "regime_str": "UNKNOWN", "regime_color": "#ffffff", "is_positive": True,
+            "alert_info": {"level": "info", "title": "STABLE", "badge_class": "badge-stable", "message": ""}
         })
+        alert = info.get("alert_info", {"level": "info", "title": "STABLE", "badge_class": "badge-stable", "message": ""})
         
         insight_content = ai_insights.get(key, "<p style='color:#fe8983;'>インサイトデータの取得に失敗しました。</p>")
         if isinstance(insight_content, dict):
@@ -507,8 +772,20 @@ def main():
         tabs_html = "\n                ".join(tabs_links)
 
         regime_bg = "rgba(68, 194, 101, 0.15)" if info['is_positive'] else "rgba(254, 137, 131, 0.15)"
+        
+        # アラートバナーのスタイル設定
+        alert_bg = "rgba(11, 87, 208, 0.12)"
+        alert_border = "#0b57d0"
+        alert_icon = "🟢"
+        if alert['level'] == 'critical':
+            alert_bg = "rgba(255, 77, 79, 0.18)"
+            alert_border = "#ff4d4f"
+            alert_icon = "🚨"
+        elif alert['level'] == 'warning':
+            alert_bg = "rgba(249, 171, 0, 0.18)"
+            alert_border = "#f9ab00"
+            alert_icon = "⚠️"
 
-        # シンタックスハイライトを壊さないための安全な文字列結合
         html_content = (
             '<!DOCTYPE html>\n'
             '<html lang="ja" data-theme="dark">\n'
@@ -516,17 +793,26 @@ def main():
             '    <meta charset="UTF-8">\n'
             '    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
             f'    <title>Quant GEX Radar - {config["name"]}</title>\n'
+            '    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>\n'
             '    <style>\n'
             '        * { box-sizing: border-box; }\n'
-            '        body { background-color: #101218; color: #ffffff; font-family: sans-serif; margin: 0; padding: 0; }\n'
+            '        body { background-color: #101218; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; }\n'
             '        .nav-tabs { background: #1a1d21; padding: 10px; display: flex; flex-wrap: wrap; gap: 8px; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid #2d2f38; }\n'
-            '        .nav-tabs a { color: #c4c7c5; text-decoration: none; padding: 8px 16px; border-radius: 4px; font-size: 14px; white-space: nowrap; }\n'
-            '        .nav-tabs a:hover { background: #2d2f38; }\n'
+            '        .nav-tabs a { color: #c4c7c5; text-decoration: none; padding: 8px 16px; border-radius: 4px; font-size: 14px; white-space: nowrap; transition: all 0.2s ease; }\n'
+            '        .nav-tabs a:hover { background: #2d2f38; color: #ffffff; }\n'
             '        .nav-tabs a.active { background: #0b57d0; color: white; font-weight: bold; }\n'
-            '        .container { max-width: 1800px; margin: 0 auto; padding: 15px; width: 100%; }\n'
+            '        .container { max-width: 1800px; margin: 0 auto; padding: 20px 15px; width: 100%; display: flex; flex-direction: column; gap: 24px; }\n'
+            '        \n'
+            '        /* ZG Alert Banner */\n'
+            f'        .zg-alert-card {{ background: {alert_bg}; border-left: 5px solid {alert_border}; border-top: 1px solid rgba(255,255,255,0.05); border-right: 1px solid rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.05); padding: 14px 20px; border-radius: 8px; display: flex; align-items: center; gap: 16px; }}\n'
+            '        .zg-alert-icon { font-size: 26px; line-height: 1; flex-shrink: 0; }\n'
+            '        .zg-alert-content { flex-grow: 1; font-size: 14px; line-height: 1.5; color: #e3e3e3; }\n'
+            f'        .zg-alert-title {{ font-size: 15px; font-weight: bold; color: {alert_border}; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }}\n'
+            '        \n'
+            '        /* Upper 2-column Grid */\n'
             '        .dashboard-grid { display: flex; flex-direction: column; gap: 20px; width: 100%; }\n'
-            '        .chart-panel { width: 100%; min-width: 0; }\n'
-            '        .ai-panel { width: 100%; min-width: 0; border-top: 1px solid #2d2f38; padding-top: 15px; }\n'
+            '        .chart-panel { width: 100%; min-width: 0; background: #14171f; padding: 18px; border-radius: 10px; border: 1px solid #232734; }\n'
+            '        .ai-panel { width: 100%; min-width: 0; background: #14171f; padding: 18px; border-radius: 10px; border: 1px solid #232734; }\n'
             '        .panel-header { margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }\n'
             '        .chart-main-title { font-size: 18px; font-weight: bold; color: #ffffff; line-height: 1.3; }\n'
             '        .chart-sub-info { font-size: 12px; color: #c4c7c5; }\n'
@@ -534,16 +820,25 @@ def main():
             '        .html-legend { display: flex; flex-wrap: wrap; gap: 15px; font-size: 12px; color: #c4c7c5; margin-top: 4px; }\n'
             '        .legend-item { display: flex; align-items: center; gap: 6px; }\n'
             '        .color-dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }\n'
+            '        \n'
             '        @media (min-width: 992px) {\n'
-            '            .dashboard-grid { flex-direction: row; align-items: flex-start; justify-content: space-between; }\n'
-            '            .chart-panel { width: 55%; flex: 0 0 55%; min-width: 0; position: sticky; top: 60px; }\n'
-            '            .ai-panel { width: 43%; flex: 0 0 43%; min-width: 0; border-top: none; padding-top: 0; }\n'
+            '            .dashboard-grid { flex-direction: row; align-items: stretch; justify-content: space-between; }\n'
+            '            .chart-panel { width: 55%; flex: 0 0 55%; min-width: 0; }\n'
+            '            .ai-panel { width: 43%; flex: 0 0 43%; min-width: 0; }\n'
             '        }\n'
+            '        \n'
             '        .ai-header { color: #f9ab00; font-weight: bold; font-size: 16px; display: flex; align-items: center; gap: 8px; line-height: 1.3; margin-bottom: 0; }\n'
-            '        .ai-content { background: #1a1d21; padding: 20px; border-radius: 8px; border-left: 4px solid #0b57d0; font-size: 14px; line-height: 1.6; color: #c4c7c5; margin-top: 8px; }\n'
+            '        .ai-content { background: #1a1d21; padding: 18px; border-radius: 8px; border-left: 4px solid #0b57d0; font-size: 14px; line-height: 1.6; color: #c4c7c5; margin-top: 8px; }\n'
             '        .ai-content h3 { color: #e0e0e0; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 8px; margin-top: 0; }\n'
             '        .ai-content ul { padding-left: 20px; }\n'
             '        .ai-content li { margin-bottom: 8px; }\n'
+            '        \n'
+            '        /* Lower Full-Width Timeline Panel (Plan A) */\n'
+            '        .timeline-panel { width: 100%; background: #14171f; padding: 20px; border-radius: 10px; border: 1px solid #232734; }\n'
+            '        .timeline-header { margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; }\n'
+            '        .timeline-title { font-size: 17px; font-weight: bold; color: #ffffff; display: flex; align-items: center; gap: 8px; }\n'
+            '        .timeline-sub { font-size: 12px; color: #8e918f; }\n'
+            '        .timeline-legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: #c4c7c5; margin-top: 6px; }\n'
             '    </style>\n'
             '</head>\n'
             '<body>\n'
@@ -552,10 +847,20 @@ def main():
             '        <a href="gex_trading_guide.html" style="margin-left:auto; color: #f9ab00;">■ 取引マニュアル</a>\n'
             '    </div>\n'
             '    <div class="container">\n'
+            '        <!-- 1. ZG Alert Banner -->\n'
+            '        <div class="zg-alert-card">\n'
+            f'            <div class="zg-alert-icon">{alert_icon}</div>\n'
+            '            <div class="zg-alert-content">\n'
+            f'                <div class="zg-alert-title">{alert["title"]}</div>\n'
+            f'                <div>{alert["message"]}</div>\n'
+            '            </div>\n'
+            '        </div>\n'
+            '        \n'
+            '        <!-- 2. Upper Row: Current Ladder & AI Insights -->\n'
             '        <div class="dashboard-grid">\n'
             '            <div class="chart-panel">\n'
             '                <div class="panel-header">\n'
-            f'                    <div class="chart-main-title">Quant Options Radar: {config["name"]}</div>\n'
+            f'                    <div class="chart-main-title">Snapshot: {config["name"]}</div>\n'
             f'                    <div class="chart-sub-info">Expiry: {info["expiry"]} &nbsp;|&nbsp; As of: {info["spot_date"]}</div>\n'
             f'                    <div class="regime-badge" style="background:{regime_bg}; color:{info["regime_color"]}; border:1px solid {info["regime_color"]};">● {info["regime_str"]}</div>\n'
             '                    <div class="html-legend">\n'
@@ -565,7 +870,7 @@ def main():
             '                        <span class="legend-item"><span class="color-dot" style="background:#ffa500"></span>IV</span>\n'
             '                    </div>\n'
             '                </div>\n'
-            f'                {graph_html}\n'
+            f'                {ladder_html}\n'
             '            </div>\n'
             '            <div class="ai-panel">\n'
             '                <div class="panel-header">\n'
@@ -575,6 +880,15 @@ def main():
             f'                    {insight_content}\n'
             '                </div>\n'
             '            </div>\n'
+            '        </div>\n'
+            '        \n'
+            '        <!-- 3. Lower Row: Historical Timeline Chart (Plan A) -->\n'
+            '        <div class="timeline-panel">\n'
+            '            <div class="timeline-header">\n'
+            f'                <div class="timeline-title">📈 GEX & Zero-Gamma Historical Timeline: {config["name"]}</div>\n'
+            '                <div class="timeline-sub">過去のSpot価格推移、Zero-Gamma（ZG）、および主要コール/プットウォールの防衛線シフト（ガンマレンジ帯）</div>\n'
+            '            </div>\n'
+            f'            {timeline_html}\n'
             '        </div>\n'
             '    </div>\n'
             '</body>\n'
