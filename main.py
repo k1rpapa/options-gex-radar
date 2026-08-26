@@ -63,6 +63,21 @@ def clean_val(val):
     except:
         return 0.0
 
+def is_valid_greeks_file(fpath):
+    """満期消滅等でGammaが全ストライク0になっている無効ファイルを判定"""
+    try:
+        df = pd.read_csv(fpath)
+        gamma_cols = [c for c in df.columns if 'Gamma' in c]
+        if not gamma_cols:
+            return True
+        for col in gamma_cols:
+            vals = pd.to_numeric(df[col].astype(str).str.replace(',', '').str.replace('s', '').str.replace('%', ''), errors='coerce').fillna(0)
+            if vals.max() > 0:
+                return True
+        return False
+    except:
+        return False
+
 def get_all_csv_pairs(asset_key):
     """銘柄に該当する全日付のCSVペア (expiry, as_of) -> (sb_path, gk_path) を取得"""
     prefix = asset_key.lower()
@@ -89,7 +104,7 @@ def get_all_csv_pairs(asset_key):
                 gk_dict[key] = p
                 
     common_keys = sorted(
-        list(set(sb_dict.keys()) & set(gk_dict.keys())), 
+        [k for k in (set(sb_dict.keys()) & set(gk_dict.keys())) if is_valid_greeks_file(gk_dict[k])], 
         key=lambda k: (datetime.strptime(k[1], '%m-%d-%Y'), datetime.strptime(k[0], '%m_%d_%y'))
     )
     return common_keys, sb_dict, gk_dict
@@ -214,28 +229,32 @@ def calculate_gex_metrics(df_sb, df_gk, mult, spot_price_hint=None):
 
     # 2. 全体チェーンでの Zero Gamma (ZG) 算出 (ノイズ排除: Total_OI > max(Total_OI) * 0.05)
     max_oi = df_merged['Total_OI'].max()
-    valid_mask = (df_merged['Total_OI'] > max_oi * 0.05) if max_oi > 0 else (df_merged['Total_OI'] > 0)
-    df_valid = df_merged[valid_mask].sort_values('Strike').reset_index(drop=True)
-    
-    if not df_valid.empty:
-        signs = np.sign(df_valid['Total_GEX'])
-        flips = np.where(np.diff(signs) != 0)[0] 
+    max_gex = df_merged['Total_GEX'].abs().max()
+    if max_gex > 0:
+        valid_mask = (df_merged['Total_OI'] > max_oi * 0.05) if max_oi > 0 else (df_merged['Total_OI'] > 0)
+        df_valid = df_merged[valid_mask].sort_values('Strike').reset_index(drop=True)
         
-        if len(flips) > 0:
-            closest_flip_strike = None
-            min_dist = float('inf')
-            for idx in flips:
-                s1, s2 = df_valid.loc[idx, 'Strike'], df_valid.loc[idx + 1, 'Strike']
-                g1, g2 = df_valid.loc[idx, 'Total_GEX'], df_valid.loc[idx + 1, 'Total_GEX']
-                exact_zero_strike = s1 - g1 * (s2 - s1) / (g2 - g1) if g1 != g2 else (s1 + s2) / 2.0
-                dist = abs(exact_zero_strike - spot_price)
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_flip_strike = exact_zero_strike
-            zero_gamma_strike = closest_flip_strike
+        if not df_valid.empty:
+            signs = np.sign(df_valid['Total_GEX'])
+            flips = np.where(np.diff(signs) != 0)[0] 
+            
+            if len(flips) > 0:
+                closest_flip_strike = None
+                min_dist = float('inf')
+                for idx in flips:
+                    s1, s2 = df_valid.loc[idx, 'Strike'], df_valid.loc[idx + 1, 'Strike']
+                    g1, g2 = df_valid.loc[idx, 'Total_GEX'], df_valid.loc[idx + 1, 'Total_GEX']
+                    exact_zero_strike = s1 - g1 * (s2 - s1) / (g2 - g1) if g1 != g2 else (s1 + s2) / 2.0
+                    dist = abs(exact_zero_strike - spot_price)
+                    if dist < min_dist:
+                        min_dist = dist
+                        closest_flip_strike = exact_zero_strike
+                zero_gamma_strike = closest_flip_strike
+            else:
+                zero_gamma_idx = df_valid['Total_GEX'].abs().idxmin()
+                zero_gamma_strike = df_valid.loc[zero_gamma_idx, 'Strike']
         else:
-            zero_gamma_idx = df_valid['Total_GEX'].abs().idxmin()
-            zero_gamma_strike = df_valid.loc[zero_gamma_idx, 'Strike']
+            zero_gamma_strike = spot_price
     else:
         zero_gamma_strike = spot_price
 
