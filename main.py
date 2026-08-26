@@ -203,27 +203,19 @@ def calculate_gex_metrics(df_sb, df_gk, mult, spot_price_hint=None):
     df_merged['Total_GEX'] = df_merged['Call_GEX'] + df_merged['Put_GEX']
     df_merged['Total_OI'] = df_merged['Call_OpenInt'] + df_merged['Put_OpenInt']
 
-    min_strike = spot_price * 0.85
-    max_strike = spot_price * 1.15
-    df_near = df_merged[(df_merged['Strike'] >= min_strike) & (df_merged['Strike'] <= max_strike)].copy()
-    active_mask = (df_near['Total_OI'] > 0) | (df_near['Total_GEX'].abs() > 0.001)
-    df_active = df_near[active_mask].copy()
-
-    if len(df_active) < 12:
-        df_active = df_merged[(df_merged['Total_OI'] > 0) | (df_merged['Total_GEX'].abs() > 0.001)].copy()
-
-    if df_active.empty:
-        df_active = df_merged.copy()
-
-    if len(df_active) > 32:
-        df_active['Dist_From_Spot'] = (df_active['Strike'] - spot_price).abs()
-        df_active = df_active.nsmallest(32, 'Dist_From_Spot').copy()
-
-    df_sorted = df_active.sort_values('Strike').reset_index(drop=True)
+    # 1. 全体チェーンでの主要ウォール算出 (Major / Minor Call & Put Walls)
+    call_walls_df = df_merged[df_merged['Call_GEX'] > 0].nlargest(2, 'Call_GEX')[['Strike', 'Call_GEX']].copy()
+    put_walls_df = df_merged[df_merged['Put_GEX'] < 0].nsmallest(2, 'Put_GEX')[['Strike', 'Put_GEX']].copy()
     
-    # Calculate Zero Gamma Level
-    valid_mask = df_sorted['Total_OI'] > df_sorted['Total_OI'].max() * 0.05 
-    df_valid = df_sorted[valid_mask].reset_index(drop=True)
+    call_walls = call_walls_df.to_dict('records')
+    put_walls = put_walls_df.to_dict('records')
+    while len(call_walls) < 2: call_walls.append({"Strike": 0.0, "Call_GEX": 0.0})
+    while len(put_walls) < 2: put_walls.append({"Strike": 0.0, "Put_GEX": 0.0})
+
+    # 2. 全体チェーンでの Zero Gamma (ZG) 算出 (ノイズ排除: Total_OI > max(Total_OI) * 0.05)
+    max_oi = df_merged['Total_OI'].max()
+    valid_mask = (df_merged['Total_OI'] > max_oi * 0.05) if max_oi > 0 else (df_merged['Total_OI'] > 0)
+    df_valid = df_merged[valid_mask].sort_values('Strike').reset_index(drop=True)
     
     if not df_valid.empty:
         signs = np.sign(df_valid['Total_GEX'])
@@ -247,13 +239,24 @@ def calculate_gex_metrics(df_sb, df_gk, mult, spot_price_hint=None):
     else:
         zero_gamma_strike = spot_price
 
-    call_walls_df = df_sorted[df_sorted['Call_GEX'] > 0].nlargest(2, 'Call_GEX')[['Strike', 'Call_GEX']].copy()
-    put_walls_df = df_sorted[df_sorted['Put_GEX'] < 0].nsmallest(2, 'Put_GEX')[['Strike', 'Put_GEX']].copy()
-    
-    call_walls = call_walls_df.to_dict('records')
-    put_walls = put_walls_df.to_dict('records')
-    while len(call_walls) < 2: call_walls.append({"Strike": 0.0, "Call_GEX": 0.0})
-    while len(put_walls) < 2: put_walls.append({"Strike": 0.0, "Put_GEX": 0.0})
+    # 3. グラフ描画用 (GEXラダー用) に Spot近傍のストライクを抽出
+    min_strike = spot_price * 0.85
+    max_strike = spot_price * 1.15
+    df_near = df_merged[(df_merged['Strike'] >= min_strike) & (df_merged['Strike'] <= max_strike)].copy()
+    active_mask = (df_near['Total_OI'] > 0) | (df_near['Total_GEX'].abs() > 0.001)
+    df_active = df_near[active_mask].copy()
+
+    if len(df_active) < 12:
+        df_active = df_merged[(df_merged['Total_OI'] > 0) | (df_merged['Total_GEX'].abs() > 0.001)].copy()
+
+    if df_active.empty:
+        df_active = df_merged.copy()
+
+    if len(df_active) > 32:
+        df_active['Dist_From_Spot'] = (df_active['Strike'] - spot_price).abs()
+        df_active = df_active.nsmallest(32, 'Dist_From_Spot').copy()
+
+    df_sorted = df_active.sort_values('Strike').reset_index(drop=True)
 
     return {
         "df_sorted": df_sorted,
@@ -562,7 +565,19 @@ def process_asset_data(asset_key, config, ticker_hist):
     
     spot_price = 0.0
     if not ticker_hist.empty:
-        spot_price = float(ticker_hist['Close'].iloc[-1])
+        if file_as_of:
+            d = datetime.strptime(file_as_of, '%m-%d-%Y')
+            d_fmt = d.strftime('%Y-%m-%d')
+            if d_fmt in ticker_hist.index.strftime('%Y-%m-%d'):
+                spot_price = float(ticker_hist.loc[ticker_hist.index.strftime('%Y-%m-%d') == d_fmt, 'Close'].iloc[0])
+            else:
+                past_spots = ticker_hist.loc[ticker_hist.index.strftime('%Y-%m-%d') <= d_fmt, 'Close']
+                if not past_spots.empty:
+                    spot_price = float(past_spots.iloc[-1])
+                else:
+                    spot_price = float(ticker_hist['Close'].iloc[-1])
+        else:
+            spot_price = float(ticker_hist['Close'].iloc[-1])
         
     metrics = calculate_gex_metrics(df_sb, df_gk, mult, spot_price)
     df_sorted = metrics['df_sorted']
