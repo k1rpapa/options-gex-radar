@@ -152,6 +152,115 @@ def load_barchart_csv(asset_key):
     
     return df_sb, df_gk, expiry, as_of_date
 
+def extract_implied_spot_from_chain(df_sb, df_gk):
+    """
+    オプションチェーンデータからインプライド原資産価格（Forward/Spot）を高精度に逆算
+    1. GreeksファイルのCall Deltaが0.50に最も近いストライク（Delta ATM Crossing）
+    2. Side-by-Sideファイルのプットコールパリティ（S = K + C - P）
+    """
+    try:
+        df_sb_c = df_sb.copy()
+        df_gk_c = df_gk.copy()
+        df_sb_c.columns = [str(c).strip() for c in df_sb_c.columns]
+        df_gk_c.columns = [str(c).strip() for c in df_gk_c.columns]
+        
+        df_sb_c['Strike'] = df_sb_c['Strike'].apply(parse_strike)
+        df_gk_c['Strike'] = df_gk_c['Strike'].apply(parse_strike)
+        
+        # --- 1. Delta 0.50 反転点 (ATM) の推定 ---
+        delta_idx = [i for i, col in enumerate(df_gk_c.columns) if 'Delta' in col]
+        delta_spot = None
+        if len(delta_idx) >= 1:
+            c_delta = pd.to_numeric(df_gk_c.iloc[:, delta_idx[0]].astype(str).str.replace(',', '').str.replace('s', ''), errors='coerce').fillna(0)
+            valid_delta = df_gk_c[(c_delta > 0.05) & (c_delta < 0.95)]
+            if not valid_delta.empty:
+                idx_near = (c_delta.loc[valid_delta.index] - 0.50).abs().idxmin()
+                delta_spot = float(df_gk_c.loc[idx_near, 'Strike'])
+            else:
+                # 満期直前等でDeltaが1と0に二極化している場合、境界ストライクを特定
+                ones = df_gk_c[c_delta >= 0.90]
+                zeros = df_gk_c[c_delta <= 0.10]
+                if not ones.empty and not zeros.empty:
+                    last_one = ones['Strike'].max()
+                    first_zero = zeros[zeros['Strike'] > last_one]['Strike'].min() if (zeros['Strike'] > last_one).any() else last_one
+                    delta_spot = (last_one + first_zero) / 2.0
+                elif not ones.empty:
+                    delta_spot = float(ones['Strike'].max())
+
+        # --- 2. Put-Call Parity: S = K + C - P ---
+        # side-by-side形式: Call_Latest(col 1), Strike(col 5), Put_Latest(col 7)
+        if len(df_sb_c.columns) >= 8:
+            call_latest = pd.to_numeric(df_sb_c.iloc[:, 1].astype(str).str.replace(',', '').str.replace('s', ''), errors='coerce').fillna(0)
+            put_latest = pd.to_numeric(df_sb_c.iloc[:, 7].astype(str).str.replace(',', '').str.replace('s', ''), errors='coerce').fillna(0)
+            
+            valid_mask = (call_latest > 0) & (put_latest > 0) & (df_sb_c['Strike'] > 0)
+            if valid_mask.any():
+                df_valid = df_sb_c[valid_mask].copy()
+                c_v = call_latest[valid_mask]
+                p_v = put_latest[valid_mask]
+                df_valid['Implied_Spot'] = df_valid['Strike'] + c_v - p_v
+                
+                # Delta推定値近傍（ATM ±20%）に絞ってノイズ排除
+                if delta_spot and delta_spot > 0:
+                    near_atm = df_valid[(df_valid['Strike'] >= delta_spot * 0.8) & (df_valid['Strike'] <= delta_spot * 1.2)]
+                    if not near_atm.empty:
+                        return float(near_atm['Implied_Spot'].median())
+                return float(df_valid['Implied_Spot'].median())
+                
+        if delta_spot and delta_spot > 0:
+            return float(delta_spot)
+            
+    except Exception as e:
+        print(f"[-] Warning: Failed to extract implied spot from chain: {e}")
+        
+    return None
+
+def resolve_spot_price(df_sb, df_gk, ticker_hist, file_as_of):
+    """
+    オプションチェーンのインプライド原資産価格とyfinance価格を照合し、最も信頼できるスポット価格を決定
+    """
+    implied_spot = extract_implied_spot_from_chain(df_sb, df_gk)
+    
+    yf_spot = None
+    if ticker_hist is not None and not ticker_hist.empty and 'Close' in ticker_hist.columns:
+        valid_close = ticker_hist['Close'].dropna()
+        if not valid_close.empty:
+            if file_as_of:
+                try:
+                    d = datetime.strptime(file_as_of, '%m-%d-%Y')
+                    d_fmt = d.strftime('%Y-%m-%d')
+                    exact_match = valid_close[valid_close.index.strftime('%Y-%m-%d') == d_fmt]
+                    if not exact_match.empty:
+                        yf_spot = float(exact_match.iloc[0])
+                    else:
+                        past_match = valid_close[valid_close.index.strftime('%Y-%m-%d') <= d_fmt]
+                        if not past_match.empty:
+                            yf_spot = float(past_match.iloc[-1])
+                        else:
+                            yf_spot = float(valid_close.iloc[-1])
+                except:
+                    yf_spot = float(valid_close.iloc[-1])
+            else:
+                yf_spot = float(valid_close.iloc[-1])
+
+    # 優先順位決定:
+    # 1. implied_spotが算出できている場合:
+    #    - yf_spotが存在し、かつ乖離が5%以内なら限月直結のimplied_spotを採用（サヤズレ解消）
+    #    - yf_spotがNaNや異常値（大幅乖離）の場合も、チェーン内の真の原資産価格implied_spotを採用
+    if implied_spot and implied_spot > 0:
+        if yf_spot and yf_spot > 0:
+            diff_pct = abs(implied_spot - yf_spot) / yf_spot
+            if diff_pct > 0.05:
+                print(f"[*] Note: Discrepancy detected (Implied: {implied_spot:.3f}, YF: {yf_spot:.3f}, Diff: {diff_pct*100:.1f}%). Prioritizing Option-Implied Spot.")
+        return float(implied_spot)
+        
+    # 2. implied_spotが算出できない場合のフォールバック: 有効なyf_spot
+    if yf_spot and yf_spot > 0 and not np.isnan(yf_spot):
+        return float(yf_spot)
+        
+    # 3. 万一すべて取得できない場合の最終防衛ライン: 0ではなく1.0（エラー防止）
+    return 1.0
+
 def calculate_gex_metrics(df_sb, df_gk, mult, spot_price_hint=None):
     """単一スナップショットからGEX、ZG、Call/Put Wallを算出"""
     df_sb = df_sb.copy()
@@ -208,7 +317,10 @@ def calculate_gex_metrics(df_sb, df_gk, mult, spot_price_hint=None):
 
     df_merged = df_gk_agg.merge(df_sb_agg, on='Strike', how='outer').fillna(0)
     
-    spot_price = spot_price_hint if spot_price_hint and spot_price_hint > 0 else df_merged['Strike'].median()
+    if spot_price_hint and spot_price_hint > 0 and not np.isnan(spot_price_hint):
+        spot_price = float(spot_price_hint)
+    else:
+        spot_price = extract_implied_spot_from_chain(df_sb, df_gk) or 1.0
     if spot_price == 0.0:
         spot_price = 1.0
 
@@ -352,19 +464,10 @@ def build_timeline_dataframe(asset_key, config, ticker_hist):
     
     for exp, date_str in common_keys:
         d = datetime.strptime(date_str, '%m-%d-%Y')
-        d_fmt = d.strftime('%Y-%m-%d')
-        spot = None
-        if not ticker_hist.empty:
-            if d_fmt in ticker_hist.index.strftime('%Y-%m-%d'):
-                spot = float(ticker_hist.loc[ticker_hist.index.strftime('%Y-%m-%d') == d_fmt, 'Close'].iloc[0])
-            else:
-                past_spots = ticker_hist.loc[ticker_hist.index.strftime('%Y-%m-%d') <= d_fmt, 'Close']
-                if not past_spots.empty:
-                    spot = float(past_spots.iloc[-1])
-                    
         df_sb = pd.read_csv(sb_dict[(exp, date_str)])
         df_gk = pd.read_csv(gk_dict[(exp, date_str)])
         
+        spot = resolve_spot_price(df_sb, df_gk, ticker_hist, date_str)
         metrics = calculate_gex_metrics(df_sb, df_gk, mult, spot)
         
         cw1 = metrics['call_walls'][0]['Strike']
@@ -582,22 +685,7 @@ def process_asset_data(asset_key, config, ticker_hist):
         
     mult = config['multiplier']
     
-    spot_price = 0.0
-    if not ticker_hist.empty:
-        if file_as_of:
-            d = datetime.strptime(file_as_of, '%m-%d-%Y')
-            d_fmt = d.strftime('%Y-%m-%d')
-            if d_fmt in ticker_hist.index.strftime('%Y-%m-%d'):
-                spot_price = float(ticker_hist.loc[ticker_hist.index.strftime('%Y-%m-%d') == d_fmt, 'Close'].iloc[0])
-            else:
-                past_spots = ticker_hist.loc[ticker_hist.index.strftime('%Y-%m-%d') <= d_fmt, 'Close']
-                if not past_spots.empty:
-                    spot_price = float(past_spots.iloc[-1])
-                else:
-                    spot_price = float(ticker_hist['Close'].iloc[-1])
-        else:
-            spot_price = float(ticker_hist['Close'].iloc[-1])
-        
+    spot_price = resolve_spot_price(df_sb, df_gk, ticker_hist, file_as_of)
     metrics = calculate_gex_metrics(df_sb, df_gk, mult, spot_price)
     df_sorted = metrics['df_sorted']
     spot_price = metrics['spot_price']
