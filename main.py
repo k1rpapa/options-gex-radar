@@ -27,6 +27,7 @@ DOCS_DIR.mkdir(parents=True, exist_ok=True)
 ASSET_CONFIG = {
     "ES": {"name": "🇺🇸 S&P 500 (ES)", "ticker": "ES=F", "multiplier": 50, "filename": "es.html"},
     "NQ": {"name": "💻 NASDAQ 100 (NQ)", "ticker": "NQ=F", "multiplier": 20, "filename": "nq.html"},
+    "GC": {"name": "🥇 ゴールド (GC)", "ticker": "GC=F", "multiplier": 100, "filename": "gc.html"},
     "SI": {"name": "🥈 シルバー (SI)", "ticker": "SI=F", "multiplier": 5000, "filename": "index.html"},
     "CL": {"name": "🛢️ 原油 (CL)", "ticker": "CL=F", "multiplier": 1000, "filename": "cl.html"},
     "PL": {"name": "✨ プラチナ (PL)", "ticker": "PL=F", "multiplier": 50, "filename": "pl.html"},
@@ -133,7 +134,7 @@ def load_barchart_csv(asset_key):
         
         match = re.search(r'exp-(\d{2}_\d{2}_\d{2})', sb_path)
         expiry = match.group(1) if match else "Unknown"
-        date_match = re.search(r'-(\d{2}-\d{2}-\d{4})\.csv', sb_path)
+        date_match = re.search(r'-(\d{2}-\d{2}-\d{4})(?: \(\d+\))?\.csv', sb_path)
         as_of_date = date_match.group(1) if date_match else None
         
         df_sb = pd.read_csv(sb_path)
