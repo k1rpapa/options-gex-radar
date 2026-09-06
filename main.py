@@ -42,7 +42,8 @@ ASSET_CONFIG = {
     "CC": {"name": "🍫 ココア (CC)", "ticker": "CC=F", "multiplier": 10, "filename": "cc.html"},
     "KC": {"name": "☕ コーヒー (KC)", "ticker": "KC=F", "multiplier": 375, "filename": "kc.html"},
     "DX": {"name": "💵 ドルインデックス (DXY)", "ticker": "DX-Y.NYB", "multiplier": 1000, "filename": "dxy.html"},
-    "J6": {"name": "💴 日本円 (JPY)", "ticker": "6J=F", "multiplier": 12500000, "filename": "jpy.html"}
+    "J6": {"name": "💴 日本円 (JPY)", "ticker": "6J=F", "multiplier": 12500000, "filename": "jpy.html"},
+    "ZN": {"name": "🇺🇸 米10年債 (ZN)", "ticker": "ZN=F", "multiplier": 1000, "filename": "zn.html"}
 }
 
 # ==========================================
